@@ -1,7 +1,8 @@
-model_weights/
+
 data/
 data
-model_weights
+model_weights/*
+!model_weights/tokenizers
 
 __pycache__/
 *.pyc
