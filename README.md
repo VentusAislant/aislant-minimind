@@ -86,7 +86,7 @@ python train_full_sft.py --from_resume 1
 ```
 
 **断点续训说明：**
-- 训练过程会自动在 `./checkpoints/` 目录保存完整检查点（模型、优化器、训练进度等）
+- 训练过程会自动在 `model_weights/` 目录保存完整检查点（模型、优化器、训练进度等）
 - 检查点文件命名：`<权重名>_<维度>_resume.pth`（如：`full_sft_512_resume.pth`）
 - 支持跨不同 GPU 数量恢复（自动调整 step）
 - 支持 wandb 训练记录连续性（自动恢复同一个 run）
