@@ -3,7 +3,6 @@
 import argparse
 import math
 import os
-import time
 from contextlib import nullcontext
 from pathlib import Path
 
@@ -14,6 +13,7 @@ from torch import optim
 from torch.nn.parallel import DistributedDataParallel as DDP  # [DDP]
 from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler  # [DDP]
+from tqdm.auto import tqdm
 from transformers import AutoTokenizer
 
 from ..dataset.lm_dataset import PretrainDataset
@@ -152,10 +152,15 @@ if __name__ == "__main__":
     for epoch in range(args.epochs):
         if sampler is not None:
             sampler.set_epoch(epoch)  # [DDP] 每个 epoch 打乱顺序不同，必须调用
-        start_time = time.time()
         tail_steps = len(loader) % args.accumulation_steps
+        progress = tqdm(
+            loader,
+            desc=f"Epoch {epoch + 1}/{args.epochs}",
+            disable=not is_main,
+            dynamic_ncols=True,
+        )
 
-        for step, (input_ids, labels) in enumerate(loader, start=1):
+        for step, (input_ids, labels) in enumerate(progress, start=1):
             input_ids = input_ids.to(device)
             labels = labels.to(device)
 
@@ -186,14 +191,13 @@ if __name__ == "__main__":
                 if ddp:  # [DDP] 所有卡都要参与 all_reduce，所以放在 is_main 判断之外
                     dist.all_reduce(log_loss, op=dist.ReduceOp.AVG)
                 if is_main:
-                    elapsed = time.time() - start_time
-                    Logger(
-                        f"Epoch [{epoch + 1}/{args.epochs}] Step [{step}/{len(loader)}] "
-                        f"loss={log_loss.item():.4f} "
-                        f"lr={optimizer.param_groups[0]['lr']:.8f} "
-                        f"time={elapsed:.1f}s",
-                        level="train",
-                    )
+                    with tqdm.external_write_mode():
+                        Logger(
+                            f"Epoch [{epoch + 1}/{args.epochs}] Step [{step}/{len(loader)}] "
+                            f"loss={log_loss.item():.4f} "
+                            f"lr={optimizer.param_groups[0]['lr']:.8f}",
+                            level="train",
+                        )
                     if wandb_run:
                         wandb_run.log({
                             "loss": log_loss.item(),

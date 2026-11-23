@@ -2,7 +2,6 @@
 
 import argparse
 import math
-import time
 from contextlib import nullcontext
 from pathlib import Path
 
@@ -10,6 +9,7 @@ import datasets  # noqa: F401  # Windows pyarrow/torch DLL conflict workaround
 import torch
 from torch import optim
 from torch.utils.data import DataLoader
+from tqdm.auto import tqdm
 from transformers import AutoTokenizer
 
 from ..dataset.lm_dataset import PretrainDataset
@@ -113,10 +113,14 @@ if __name__ == "__main__":
     # 4. 训练
     optimizer.zero_grad(set_to_none=True)
     for epoch in range(args.epochs):
-        start_time = time.time()
         tail_steps = len(loader) % args.accumulation_steps
+        progress = tqdm(
+            loader,
+            desc=f"Epoch {epoch + 1}/{args.epochs}",
+            dynamic_ncols=True,
+        )
 
-        for step, (input_ids, labels) in enumerate(loader, start=1):
+        for step, (input_ids, labels) in enumerate(progress, start=1):
             input_ids = input_ids.to(device)
             labels = labels.to(device)
 
@@ -139,17 +143,17 @@ if __name__ == "__main__":
                 scheduler.step()
 
             if step % args.log_interval == 0 or step == len(loader):
-                elapsed = time.time() - start_time
-                Logger(
-                    f"Epoch [{epoch + 1}/{args.epochs}] Step [{step}/{len(loader)}] "
-                    f"loss={loss.item() * accumulation:.4f} "
-                    f"lr={optimizer.param_groups[0]['lr']:.8f} "
-                    f"time={elapsed:.1f}s",
-                    level="train",
-                )
+                log_loss = loss.item() * accumulation
+                with tqdm.external_write_mode():
+                    Logger(
+                        f"Epoch [{epoch + 1}/{args.epochs}] Step [{step}/{len(loader)}] "
+                        f"loss={log_loss:.4f} "
+                        f"lr={optimizer.param_groups[0]['lr']:.8f}",
+                        level="train",
+                    )
                 if wandb_run:
                     wandb_run.log({
-                        "loss": loss.item() * accumulation,
+                        "loss": log_loss,
                         "learning_rate": optimizer.param_groups[0]["lr"],
                         "epoch": epoch + 1,
                     })
