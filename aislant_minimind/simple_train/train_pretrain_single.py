@@ -112,15 +112,14 @@ if __name__ == "__main__":
 
     # 4. 训练
     optimizer.zero_grad(set_to_none=True)
+    progress = tqdm(
+        total=len(loader) * args.epochs,
+        dynamic_ncols=True,
+    )
     for epoch in range(args.epochs):
         tail_steps = len(loader) % args.accumulation_steps
-        progress = tqdm(
-            loader,
-            desc=f"Epoch {epoch + 1}/{args.epochs}",
-            dynamic_ncols=True,
-        )
 
-        for step, (input_ids, labels) in enumerate(progress, start=1):
+        for step, (input_ids, labels) in enumerate(loader, start=1):
             input_ids = input_ids.to(device)
             labels = labels.to(device)
 
@@ -142,6 +141,8 @@ if __name__ == "__main__":
                 optimizer.zero_grad(set_to_none=True)
                 scheduler.step()
 
+            progress.update(1)
+
             if step % args.log_interval == 0 or step == len(loader):
                 log_loss = loss.item() * accumulation
                 with tqdm.external_write_mode():
@@ -157,6 +158,7 @@ if __name__ == "__main__":
                         "learning_rate": optimizer.param_groups[0]["lr"],
                         "epoch": epoch + 1,
                     })
+    progress.close()
 
     # 5. 保存最终 Hugging Face 模型
     args.output_dir.mkdir(parents=True, exist_ok=True)

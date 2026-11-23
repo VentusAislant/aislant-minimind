@@ -149,18 +149,17 @@ if __name__ == "__main__":
 
     # 4. 训练
     optimizer.zero_grad(set_to_none=True)
+    progress = tqdm(
+        total=len(loader) * args.epochs,
+        disable=not is_main,
+        dynamic_ncols=True,
+    )
     for epoch in range(args.epochs):
         if sampler is not None:
             sampler.set_epoch(epoch)  # [DDP] 每个 epoch 打乱顺序不同，必须调用
         tail_steps = len(loader) % args.accumulation_steps
-        progress = tqdm(
-            loader,
-            desc=f"Epoch {epoch + 1}/{args.epochs}",
-            disable=not is_main,
-            dynamic_ncols=True,
-        )
 
-        for step, (input_ids, labels) in enumerate(progress, start=1):
+        for step, (input_ids, labels) in enumerate(loader, start=1):
             input_ids = input_ids.to(device)
             labels = labels.to(device)
 
@@ -186,6 +185,9 @@ if __name__ == "__main__":
                 optimizer.zero_grad(set_to_none=True)
                 scheduler.step()
 
+            if is_main:
+                progress.update(1)
+
             if step % args.log_interval == 0 or step == len(loader):
                 log_loss = loss.detach() * accumulation
                 if ddp:  # [DDP] 所有卡都要参与 all_reduce，所以放在 is_main 判断之外
@@ -204,6 +206,7 @@ if __name__ == "__main__":
                             "learning_rate": optimizer.param_groups[0]["lr"],
                             "epoch": epoch + 1,
                         })
+    progress.close()
 
     # 5. 只在主进程保存最终 Hugging Face 模型
     if ddp:
