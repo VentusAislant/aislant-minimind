@@ -1,6 +1,8 @@
 
 data/
 data
+!tests/data/
+!tests/data/pretrain_resume_80.jsonl
 model_weights/*
 !model_weights/tokenizers
 

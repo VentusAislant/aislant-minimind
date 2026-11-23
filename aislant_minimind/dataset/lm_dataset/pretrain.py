@@ -45,7 +45,7 @@ class PretrainDataset(Dataset):
                     DatasetDict({
                         train: Dataset({features: ['text'], num_rows: 100000})
                     })
-                制定了 split 返回的就是
+                指定了 split 返回的就是
                     Dataset({features: ['text'], num_rows: 100000})
                 
                 Dataset 对象可以直接用索引读取
