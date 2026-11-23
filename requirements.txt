@@ -6,21 +6,21 @@ jieba==0.42.1
 jsonlines==4.0.0
 marshmallow==3.22.0
 ngrok==1.4.0
-nltk==3.8
-numpy==1.26.4
+nltk==3.9.1
+numpy==2.2.6
+scipy==1.15.3
 openai==1.59.6
 psutil==5.9.8
 protobuf==6.33.5
 pydantic==2.11.5
-rich==13.7.1
-scikit_learn==1.5.1
-sentence_transformers==2.3.1
+rich==13.9.4
+scikit-learn==1.6.1
+sentence-transformers==3.4.1
 sentencepiece==0.2.0
 simhash==2.1.2
 tiktoken==0.10.0
 transformers==4.57.6
-jinja2==3.1.2
-jsonlines==4.0.0
+jinja2==3.1.5
 trl==0.13.0
 ujson==5.1.0
 wandb==0.22.3
@@ -30,7 +30,7 @@ swanlab==0.9.8
 modelscope==1.37.0
 fastapi==0.120.1
 uvicorn==0.38.0
-# torch==2.6.0
-# torchvision==0.21.0
-# peft==0.7.1
-# matplotlib==3.10.0
+# PyTorch 请使用 CUDA 12.4 的官方 wheel 单独安装：
+# pip install torch==2.6.0 torchvision==0.21.0 --index-url https://download.pytorch.org/whl/cu124
+peft==0.14.0
+matplotlib==3.10.0
