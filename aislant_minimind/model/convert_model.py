@@ -1,15 +1,11 @@
 import os
-import sys
 import json
-
-__package__ = "scripts"
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 import torch
 import transformers
 import warnings
 from transformers import AutoTokenizer, AutoModelForCausalLM, Qwen3Config, Qwen3ForCausalLM, Qwen3MoeConfig, Qwen3MoeForCausalLM
-from model.model_minimind import MiniMindConfig, MiniMindForCausalLM
-from model.model_lora import apply_lora, merge_lora
+from ..model.model_minimind import MiniMindConfig, MiniMindForCausalLM
+from ..model.model_lora import apply_lora, merge_lora
 
 warnings.filterwarnings('ignore', category=UserWarning)
 
@@ -24,7 +20,7 @@ def convert_torch2transformers_minimind(torch_path, transformers_path, dtype=tor
     model_params = sum(p.numel() for p in lm_model.parameters() if p.requires_grad)
     print(f'模型参数: {model_params / 1e6} 百万 = {model_params / 1e9} B (Billion)')
     lm_model.save_pretrained(transformers_path, safe_serialization=False)
-    tokenizer = AutoTokenizer.from_pretrained('../model/')
+    tokenizer = AutoTokenizer.from_pretrained('model_weights/tokenizers/minimind')
     tokenizer.save_pretrained(transformers_path)
     # ======= transformers-5.0的兼容低版本写法 =======
     if int(transformers.__version__.split('.')[0]) >= 5:
@@ -83,7 +79,7 @@ def convert_torch2transformers(torch_path, transformers_path, dtype=torch.float1
     qwen_model.save_pretrained(transformers_path)
     model_params = sum(p.numel() for p in qwen_model.parameters() if p.requires_grad)
     print(f'模型参数: {model_params / 1e6} 百万 = {model_params / 1e9} B (Billion)')
-    tokenizer = AutoTokenizer.from_pretrained('../model/')
+    tokenizer = AutoTokenizer.from_pretrained('model_weights/tokenizers/minimind')
     tokenizer.save_pretrained(transformers_path)
 
     # ======= transformers-5.0的兼容低版本写法 =======
@@ -129,8 +125,8 @@ if __name__ == '__main__':
     lm_config = MiniMindConfig(hidden_size=768, num_hidden_layers=8, max_seq_len=8192, use_moe=False)
 
     # convert torch to transformers
-    torch_path = f"../out/full_sft_{lm_config.hidden_size}{'_moe' if lm_config.use_moe else ''}.pth"
-    transformers_path = '../aislant-minimind-3'
+    torch_path = f"out/full_sft_{lm_config.hidden_size}{'_moe' if lm_config.use_moe else ''}.pth"
+    transformers_path = 'aislant-minimind-3'
     convert_torch2transformers(torch_path, transformers_path)
 
     # # merge lora

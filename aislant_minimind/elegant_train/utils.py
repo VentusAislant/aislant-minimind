@@ -6,8 +6,8 @@ import sys
 from pathlib import Path
 
 # 可以支持 python xxx/train_pretrain.py 直接运行
-__package__ = "aislant_minimind.trainer"
-CUR_ROOT = Path(__file__).resolve().parents[2]  # trainer -> aislant_minimind -> <project-root>
+__package__ = "aislant_minimind.elegant_train"
+CUR_ROOT = Path(__file__).resolve().parents[2]  # elegant_train -> aislant_minimind -> <project-root>
 sys.path.insert(0, str(CUR_ROOT))
 
 import ast

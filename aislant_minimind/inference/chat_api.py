@@ -1,3 +1,5 @@
+"""通过兼容 OpenAI 的 API 进行命令行对话。"""
+
 from openai import OpenAI
 
 client = OpenAI(

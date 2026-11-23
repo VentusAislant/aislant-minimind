@@ -41,9 +41,9 @@ git clone https://huggingface.co/jingyaogong/minimind-3
 
 ```bash
 # 方式1：使用 Transformers 格式模型
-python eval_llm.py --load_from ./aislant-minimind-3
+python -m aislant_minimind.inference.eval_llm --load_from ./aislant-minimind-3
 # 方式2：基于 PyTorch 模型（确保./out目录下有对应权重）
-python eval_llm.py --load_from ./model --weight full_sft
+python -m aislant_minimind.inference.eval_llm --load_from ./model --weight full_sft
 ```
 
 ### 3'（可选）WebUI
@@ -51,7 +51,7 @@ python eval_llm.py --load_from ./model --weight full_sft
 ```bash
 # 可能需要`python>=3.10`，安装 `pip install streamlit`
 # ⚠️ 须先将 transformers 格式模型文件夹复制到 ./scripts/ 目录下（例如：cp -r aislant-minimind-3 ./scripts/aislant-minimind-3），web_demo 脚本会自动扫描该目录下包含权重文件的子文件夹，如不存在则报错
-cd scripts && streamlit run web_demo.py
+streamlit run aislant_minimind/inference/web_demo.py
 ```
 
 ### 4'（可选）第三方推理框架
@@ -98,7 +98,7 @@ python train_full_sft.py --from_resume 1
 #### 2.1 预训练（必须）
 
 ```bash
-cd trainer && python train_pretrain.py
+cd elegant_train && python train_pretrain.py
 ```
 
 > 训练后，将得到 `out/pretrain_*.pth` 作为输出权重（其中 `*` 为模型 dimension，默认为 `768`）
@@ -106,7 +106,7 @@ cd trainer && python train_pretrain.py
 #### 2.2 指令微调（必须）
 
 ```bash
-cd trainer && python train_full_sft.py
+cd elegant_train && python train_full_sft.py
 ```
 
 > 训练后，将得到 `out/full_sft_*.pth` 作为输出权重（其中 `full` 表示全参数微调）
@@ -116,10 +116,10 @@ cd trainer && python train_full_sft.py
 确保待测试的模型 `*.pth` 文件位于 `./out/` 目录下；也可直接前往[此处](https://www.modelscope.cn/models/gongjy/minimind-3-pytorch/files)下载我已训练好的 `*.pth` 权重。
 
 ```bash
-python eval_llm.py --weight full_sft
+python -m aislant_minimind.inference.eval_llm --weight full_sft
 ```
 
-> `--weight` 用于指定权重名称前缀，例如 `pretrain`、`full_sft` 等；更多参数可直接参考 `../eval_llm.py`
+> `--weight` 用于指定权重名称前缀，例如 `pretrain`、`full_sft` 等；更多参数可直接参考 `aislant_minimind/inference/eval_llm.py`
 
 <details>
 <summary>注：其它须知</summary>
@@ -468,7 +468,7 @@ python train_pretrain.py
 
 ```bash
 # 可对预训练结果做简单测试：
-python eval_llm.py --weight pretrain
+python -m aislant_minimind.inference.eval_llm --weight pretrain
 
 💬: 为什么天空是蓝色的
 🧠: 天空之所以看起来是蓝色的，主要是因为太阳光进入大气层后，短波长的蓝光更容易被空气分子散射，因此人眼从各个方向接收到的蓝光会更多。
@@ -498,7 +498,7 @@ python train_full_sft.py
 
 ```bash
 # 可对SFT结果做简单测试：
-python eval_llm.py --weight full_sft
+python -m aislant_minimind.inference.eval_llm --weight full_sft
 
 💬: 解释什么是机器学习
 🧠: 机器学习是人工智能的核心技术之一，通过算法让计算机从数据中学习规律，并持续改进预测或决策效果，常见应用包括推荐系统、图像识别、语音识别和自然语言处理。
@@ -544,9 +544,9 @@ LoRA 是一种常见的参数高效微调（Parameter-Efficient Fine-Tuning, PEF
 ```bash
 # train_lora.py 在 CPU 上通常也能比较轻快地完成
 # 方式1
-cd trainer && torchrun --nproc_per_node 1 train_lora.py
+cd elegant_train && torchrun --nproc_per_node 1 train_lora.py
 # 方式2
-cd trainer && python train_lora.py
+cd elegant_train && python train_lora.py
 ```
 
 > 训练后的模型权重文件默认每隔`save_interval步`保存为: `lora_xxx_*.pth`（*为模型具体dimension，每次保存时新文件会覆盖旧文件）
@@ -569,16 +569,16 @@ LoRA 很适合处理“如何在尽量保留通用能力的前提下，让模型
  {"conversations": [{"role": "user", "content": "你是谁"}, {"role": "assistant", "content": "您好，我是 MiniMind，由 Jingyao Gong 创建。我的主要职责是提供准确的回答和帮助。"}]}
 ```
 
-此时可将【基模 + LoRA 权重】组合使用，从而在保留基础模型通用能力的同时，增强特定领域表现。训练完成后也可以通过 `../eval_llm.py` 做简单测试。
+此时可将【基模 + LoRA 权重】组合使用，从而在保留基础模型通用能力的同时，增强特定领域表现。训练完成后也可以通过 `aislant_minimind/inference/eval_llm.py` 做简单测试。
 
 ```bash
 # 注意：weight参数指定基础模型类型，需与train_lora训练时使用的基础模型保持一致
-python eval_llm.py  --weight full_sft --lora_weight lora_medical
+python -m aislant_minimind.inference.eval_llm --weight full_sft --lora_weight lora_medical
 
 👶: 我最近经常感到头晕，可能是什么原因？
 🤖️: 头晕可能是由于多种原因，包括但不限于：心脏疾病、眼睛损伤、过敏反应、皮肤问题、过敏反应、压力、焦虑、疲劳、药物副作用、性功能障碍或者其他...
 
-python eval_llm.py  --weight full_sft --lora_weight lora_identity
+python -m aislant_minimind.inference.eval_llm --weight full_sft --lora_weight lora_identity
 
 👶: 你和openai是什么关系？
 🤖️: 我是 MiniMind，一个由 Jingyao Gong 开发的人工智能助手。我通过自然语言处理和算法训练来与用户进行交互。
@@ -587,10 +587,10 @@ python eval_llm.py  --weight full_sft --lora_weight lora_identity
 PS：如果有更充足的数据，也可以直接做 `full_sft` 全参微调；不过这通常需要更谨慎地混合通用数据与领域数据，否则很容易因为过拟合垂域样本而损失模型原有的通用性。
 
 
-> `LoRA` 权重可合并回基础模型并导出为新的完整模型权重，可使用 `../scripts/convert_model.py` 中的 `convert_merge_base_lora`：
+> `LoRA` 权重可合并回基础模型并导出为新的完整模型权重，可使用 `aislant_minimind/conversion/convert_model.py` 中的 `convert_merge_base_lora`：
 
 ```bash
-cd scripts && python convert_model.py
+python -m aislant_minimind.conversion.convert_model
 ```
 
 ### **5' 工具调用 & 自适应思考**
@@ -623,10 +623,10 @@ Tool Calling 的 chat template 已统一支持解析为：
 <tool_response>{...tool result...}</tool_response>
 ```
 
-也可以直接通过 `eval_toolcall.py` 做简单测试：
+也可以直接通过 `aislant_minimind.inference.eval_toolcall` 做简单测试：
 
 ```bash
-python eval_toolcall.py --weight full_sft
+python -m aislant_minimind.inference.eval_toolcall --weight full_sft
 
 💬: 现在几点了？
 🧠: <tool_call>{"name": "get_current_time", "arguments": {"timezone": "Asia/Shanghai"}}</tool_call>
@@ -647,7 +647,7 @@ python eval_toolcall.py --weight full_sft
 
 ```bash
 # 测试回答
-python eval_llm.py --load_from ./aislant-minimind-3 --open_thinking 1
+python -m aislant_minimind.inference.eval_llm --load_from ./aislant-minimind-3 --open_thinking 1
 ```
 
 OpenAI-API-SDK 用法：
@@ -1023,7 +1023,7 @@ python train_agent.py --rollout_engine sglang --sglang_base_url http://localhost
 
 ```bash
 # 测试最终模型 Tool Use 的能力
-python eval_toolcall.py --weight agent
+python -m aislant_minimind.inference.eval_toolcall --weight agent
 
 💬: 现在几点了？
 🧠: <tool_call>{"name": "get_current_time", "arguments": {"timezone": "Asia/Shanghai"}}</tool_call>
@@ -1314,10 +1314,10 @@ agent: 17/20 = 85.00%
 
 MiniMind 支持通过 YaRN 算法进行 RoPE 位置编码的长度外推，使模型能够更稳定地处理超出训练长度的文本序列。
 
-原生 torch 模型在使用 `../eval_llm.py` 进行推理时，只需添加 `--inference_rope_scaling` 参数即可启用 RoPE 外推：
+原生 torch 模型在使用 `aislant_minimind.inference.eval_llm` 进行推理时，只需添加 `--inference_rope_scaling` 参数即可启用 RoPE 外推：
 
 ```bash
-python eval_llm.py --weight full_sft --inference_rope_scaling
+python -m aislant_minimind.inference.eval_llm --weight full_sft --inference_rope_scaling
 ```
 
 对于 `Transformers` 格式的模型，则可以在 `config.json` 中添加以下配置实现长度外推：
@@ -1406,13 +1406,13 @@ minimind-3-exam 不是更大的基座模型，也几乎没有额外注入新知�
 
 ## 🔧 模型转换
 
-* [./scripts/convert_model.py](../scripts/convert_model.py) 可用于 `torch / transformers` 两种模型格式之间的相互转换。
+* [aislant_minimind/conversion/convert_model.py](aislant_minimind/conversion/convert_model.py) 可用于 `torch / transformers` 两种模型格式之间的相互转换。
 * 如无特殊说明，`MiniMind` 主线发布的开源模型通常以 `Transformers` 格式提供；若使用原生 `torch` 权重，请先执行 `torch2transformers` 转换。
 
 
 ## 🖥️ 基于 MiniMind 的 API 服务接口
 
-* [./scripts/serve_openai_api.py](../scripts/serve_openai_api.py) 提供了一个兼容 OpenAI API 的轻量聊天服务，便于将自己的模型接入 FastGPT、OpenWebUI、Dify 等第三方 UI。
+* [aislant_minimind/inference/serve_openai_api.py](aislant_minimind/inference/serve_openai_api.py) 提供了一个兼容 OpenAI API 的轻量聊天服务，便于将自己的模型接入 FastGPT、OpenWebUI、Dify 等第三方 UI。
 * 当前接口额外支持 `reasoning_content`、`tool_calls`、`open_thinking` 等字段，适合直接用于 Tool Calling / Thinking 场景。
 
 * 从 [HuggingFace](https://huggingface.co/collections/jingyaogong/minimind-66caf8d999f5c7fa64f399e5) 下载模型权重后，目录结构示例如下：
@@ -1430,11 +1430,11 @@ minimind-3-exam 不是更大的基座模型，也几乎没有额外注入新知�
 
 * 启动服务端
     ```bash
-    cd scripts && python serve_openai_api.py
+    python -m aislant_minimind.inference.serve_openai_api
     ```
 * 测试服务接口
     ```bash
-    cd scripts && python chat_api.py
+    python -m aislant_minimind.inference.chat_api
     ```
 * API 请求示例（兼容 OpenAI API 格式）
     ```bash

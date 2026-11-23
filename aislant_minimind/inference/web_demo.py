@@ -2,7 +2,7 @@ import random
 import re
 import json
 import os
-import sys
+from pathlib import Path
 from threading import Thread
 
 import torch
@@ -10,8 +10,7 @@ import numpy as np
 import streamlit as st
 from transformers import AutoModelForCausalLM, AutoTokenizer, TextIteratorStreamer
 
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from trainer.trainer_utils import safe_math_eval
+from aislant_minimind.elegant_train.utils import safe_math_eval
 
 st.set_page_config(page_title="MiniMind", initial_sidebar_state="collapsed")
 
@@ -241,13 +240,13 @@ def regenerate_answer(index):
 
 
 # 动态扫描模型目录
-script_dir = os.path.dirname(os.path.abspath(__file__))
+project_root = Path(__file__).resolve().parents[2]
 MODEL_PATHS = {}
-for d in sorted(os.listdir(script_dir), reverse=True):
-    full_path = os.path.join(script_dir, d)
+for d in sorted(os.listdir(project_root), reverse=True):
+    full_path = os.path.join(project_root, d)
     if os.path.isdir(full_path) and not d.startswith('.') and not d.startswith('_'):
         if any(f.endswith(('.bin', '.safetensors', '.pt')) or os.path.exists(os.path.join(full_path, 'model.safetensors.index.json')) for f in os.listdir(full_path) if os.path.isfile(os.path.join(full_path, f))):
-            MODEL_PATHS[d] = [d, d]
+            MODEL_PATHS[d] = [full_path, d]
 if not MODEL_PATHS:
     MODEL_PATHS = {"No models found": ["", "No models"]}
 

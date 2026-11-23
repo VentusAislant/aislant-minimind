@@ -1,6 +1,6 @@
+"""本地模型或兼容 API 的 Tool Calling 验证。"""
+
 import os
-import sys
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 import re
 import json
 import time
@@ -11,8 +11,8 @@ import torch
 from datetime import datetime
 from transformers import AutoTokenizer, AutoModelForCausalLM, TextStreamer
 from openai import OpenAI
-from model.model_minimind import MiniMindConfig, MiniMindForCausalLM
-from trainer.trainer_utils import setup_seed, get_model_params, safe_math_eval
+from ..model.model_minimind import MiniMindConfig, MiniMindForCausalLM
+from ..elegant_train.utils import setup_seed, get_model_params, safe_math_eval
 warnings.filterwarnings('ignore')
 
 TOOLS = [
@@ -202,8 +202,8 @@ def run_case(prompt, tools, args, model=None, tokenizer=None, client=None):
 def main():
     parser = argparse.ArgumentParser(description="MiniMind ToolCall评测")
     parser.add_argument('--backend', default='local', choices=['local', 'api'], type=str, help="推理后端（local=本地模型，api=OpenAI兼容接口）")
-    parser.add_argument('--load_from', default='../model', type=str, help="模型加载路径（model=原生torch权重，其他路径=transformers格式）")
-    parser.add_argument('--save_dir', default='../out', type=str, help="模型权重目录")
+    parser.add_argument('--load_from', default='model', type=str, help="模型加载路径（model=原生torch权重，其他路径=transformers格式）")
+    parser.add_argument('--save_dir', default='out', type=str, help="模型权重目录")
     parser.add_argument('--weight', default='full_sft', type=str, help="权重名称前缀（pretrain, full_sft, rlhf, reason, ppo_actor, grpo, spo）")
     parser.add_argument('--hidden_size', default=768, type=int, help="隐藏层维度")
     parser.add_argument('--num_hidden_layers', default=8, type=int, help="隐藏层数量")

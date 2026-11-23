@@ -5,7 +5,7 @@ python -m sglang.launch_server --model-path ./aislant-minimind-3 --attention-bac
 import os
 import sys
 
-__package__ = "trainer"
+__package__ = "elegant_train"
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 import requests

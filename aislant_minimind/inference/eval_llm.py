@@ -1,3 +1,5 @@
+"""命令行模型生成与基础能力验证。"""
+
 import os
 import time
 import argparse
@@ -5,9 +7,9 @@ import random
 import warnings
 import torch
 from transformers import AutoTokenizer, AutoModelForCausalLM, TextStreamer
-from model.model_minimind import MiniMindConfig, MiniMindForCausalLM
-from model.model_lora import *
-from trainer.trainer_utils import setup_seed, get_model_params
+from ..model.model_minimind import MiniMindConfig, MiniMindForCausalLM
+from ..model.model_lora import apply_lora, load_lora
+from ..elegant_train.utils import setup_seed, get_model_params
 warnings.filterwarnings('ignore')
 
 def init_model(args):

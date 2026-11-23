@@ -318,7 +318,7 @@ python train_full_sft.py --from_resume 1
 #### 2.1 Pretraining (Required)
 
 ```bash
-cd trainer && python train_pretrain.py
+cd elegant_train && python train_pretrain.py
 ```
 
 > After training, `out/pretrain_*.pth` will be produced as output weights (where `*` is the model dimension, default `768`)
@@ -326,7 +326,7 @@ cd trainer && python train_pretrain.py
 #### 2.2 Instruction Fine-tuning (Required)
 
 ```bash
-cd trainer && python train_full_sft.py
+cd elegant_train && python train_full_sft.py
 ```
 
 > After training, `out/full_sft_*.pth` will be produced as output weights (where `full` indicates full-parameter fine-tuning)
@@ -765,9 +765,9 @@ Its core idea is to introduce low-rank incremental branches alongside the origin
 ```bash
 # train_lora.py can usually be completed fairly quickly even on CPU
 # Method 1
-cd trainer && torchrun --nproc_per_node 1 train_lora.py
+cd elegant_train && torchrun --nproc_per_node 1 train_lora.py
 # Method 2
-cd trainer && python train_lora.py
+cd elegant_train && python train_lora.py
 ```
 
 > The trained model weight files are saved by default every `save_interval steps` as: `lora_xxx_*.pth` (* is the specific model dimension, each save overwrites the previous file)

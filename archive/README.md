@@ -319,7 +319,7 @@ python train_full_sft.py --from_resume 1
 #### 2.1 预训练（必须）
 
 ```bash
-cd trainer && python train_pretrain.py
+cd elegant_train && python train_pretrain.py
 ```
 
 > 训练后，将得到 `out/pretrain_*.pth` 作为输出权重（其中 `*` 为模型 dimension，默认为 `768`）
@@ -327,7 +327,7 @@ cd trainer && python train_pretrain.py
 #### 2.2 指令微调（必须）
 
 ```bash
-cd trainer && python train_full_sft.py
+cd elegant_train && python train_full_sft.py
 ```
 
 > 训练后，将得到 `out/full_sft_*.pth` 作为输出权重（其中 `full` 表示全参数微调）
@@ -765,9 +765,9 @@ LoRA 是一种常见的参数高效微调（Parameter-Efficient Fine-Tuning, PEF
 ```bash
 # train_lora.py 在 CPU 上通常也能比较轻快地完成
 # 方式1
-cd trainer && torchrun --nproc_per_node 1 train_lora.py
+cd elegant_train && torchrun --nproc_per_node 1 train_lora.py
 # 方式2
-cd trainer && python train_lora.py
+cd elegant_train && python train_lora.py
 ```
 
 > 训练后的模型权重文件默认每隔`save_interval步`保存为: `lora_xxx_*.pth`（*为模型具体dimension，每次保存时新文件会覆盖旧文件）
