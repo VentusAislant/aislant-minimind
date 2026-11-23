@@ -14,7 +14,7 @@ from transformers import AutoTokenizer
 
 from ..dataset.lm_dataset import PretrainDataset
 from ..model.modeling_minimind_llama import MiniMindLlamaConfig, MiniMindLlamaForCausalLM
-from .utils import resolve_dtype, setup_seed
+from .utils import Logger, resolve_dtype, setup_seed
 
 
 def parse_args():
@@ -38,6 +38,8 @@ def parse_args():
     parser.add_argument("--num_workers", type=int, default=8)
     parser.add_argument("--log_interval", type=int, default=100)
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--use_wandb", action="store_true")
+    parser.add_argument("--wandb_project", type=str, default="MiniMind-Pretrain")
     return parser.parse_args()
 
 
@@ -97,6 +99,17 @@ if __name__ == "__main__":
         eta_min=args.learning_rate * 0.1,
     )
 
+    wandb_run = None
+    if args.use_wandb:
+        import wandb
+
+        wandb_run = wandb.init(
+            project=args.wandb_project,
+            name=f"pretrain-single-{args.hidden_size}d-{args.num_hidden_layers}l",
+            mode="offline",
+        )
+        Logger(f"W&B offline 日志目录: {wandb_run.dir}", level="wandb")
+
     # 4. 训练
     optimizer.zero_grad(set_to_none=True)
     for epoch in range(args.epochs):
@@ -127,15 +140,24 @@ if __name__ == "__main__":
 
             if step % args.log_interval == 0 or step == len(loader):
                 elapsed = time.time() - start_time
-                print(
+                Logger(
                     f"Epoch [{epoch + 1}/{args.epochs}] Step [{step}/{len(loader)}] "
                     f"loss={loss.item() * accumulation:.4f} "
                     f"lr={optimizer.param_groups[0]['lr']:.8f} "
-                    f"time={elapsed:.1f}s"
+                    f"time={elapsed:.1f}s",
+                    level="train",
                 )
+                if wandb_run:
+                    wandb_run.log({
+                        "loss": loss.item() * accumulation,
+                        "learning_rate": optimizer.param_groups[0]["lr"],
+                        "epoch": epoch + 1,
+                    })
 
     # 5. 保存最终 Hugging Face 模型
     args.output_dir.mkdir(parents=True, exist_ok=True)
     model.save_pretrained(args.output_dir, safe_serialization=True)
     tokenizer.save_pretrained(args.output_dir)
-    print(f"模型已保存到 {args.output_dir}")
+    Logger(f"模型已保存到 {args.output_dir}", level="save")
+    if wandb_run:
+        wandb_run.finish()

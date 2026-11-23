@@ -7,6 +7,7 @@ import operator
 import random
 import re
 import math
+import time
 import numpy as np
 import torch
 import torch.distributed as dist
@@ -35,9 +36,20 @@ def is_main_process():
 
 
 # ======== 日志 ========
-def Logger(content):
+def Logger(content, level="info"):
     if is_main_process():
-        print(content)
+        icons = {
+            "info": "ℹ️ ",
+            "train": "🚀",
+            "wandb": "📊",
+            "save": "💾",
+            "success": "✅",
+            "warning": "⚠️ ",
+            "error": "❌",
+        }
+        icon = icons.get(level, icons["info"])
+        timestamp = time.strftime("%H:%M:%S")
+        print(f"[{timestamp}] {icon}  {content}", flush=True)
 
 
 # ======== 混合精度类型 ========

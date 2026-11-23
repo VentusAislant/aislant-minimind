@@ -41,9 +41,9 @@ git clone https://huggingface.co/jingyaogong/minimind-3
 
 ```bash
 # 方式1：使用 Transformers 格式模型
-python -m aislant_minimind.inference.eval_llm --load_from ./aislant-minimind-3
+python -m aislant_minimind.inference.cli.eval_llm --load_from ./aislant-minimind-3
 # 方式2：基于 PyTorch 模型（确保./out目录下有对应权重）
-python -m aislant_minimind.inference.eval_llm --load_from ./model --weight full_sft
+python -m aislant_minimind.inference.cli.eval_llm --load_from ./model --weight full_sft
 ```
 
 ### 3'（可选）WebUI
@@ -51,7 +51,7 @@ python -m aislant_minimind.inference.eval_llm --load_from ./model --weight full_
 ```bash
 # 可能需要`python>=3.10`，安装 `pip install streamlit`
 # ⚠️ 须先将 transformers 格式模型文件夹复制到 ./scripts/ 目录下（例如：cp -r aislant-minimind-3 ./scripts/aislant-minimind-3），web_demo 脚本会自动扫描该目录下包含权重文件的子文件夹，如不存在则报错
-streamlit run aislant_minimind/inference/web_demo.py
+streamlit run aislant_minimind/inference/web/web_demo.py
 ```
 
 ### 4'（可选）第三方推理框架
@@ -116,10 +116,10 @@ cd elegant_train && python train_full_sft.py
 确保待测试的模型 `*.pth` 文件位于 `./out/` 目录下；也可直接前往[此处](https://www.modelscope.cn/models/gongjy/minimind-3-pytorch/files)下载我已训练好的 `*.pth` 权重。
 
 ```bash
-python -m aislant_minimind.inference.eval_llm --weight full_sft
+python -m aislant_minimind.inference.cli.eval_llm --weight full_sft
 ```
 
-> `--weight` 用于指定权重名称前缀，例如 `pretrain`、`full_sft` 等；更多参数可直接参考 `aislant_minimind/inference/eval_llm.py`
+> `--weight` 用于指定权重名称前缀，例如 `pretrain`、`full_sft` 等；更多参数可直接参考 `aislant_minimind/inference/cli/eval_llm.py`
 
 <details>
 <summary>注：其它须知</summary>
@@ -468,7 +468,7 @@ python train_pretrain.py
 
 ```bash
 # 可对预训练结果做简单测试：
-python -m aislant_minimind.inference.eval_llm --weight pretrain
+python -m aislant_minimind.inference.cli.eval_llm --weight pretrain
 
 💬: 为什么天空是蓝色的
 🧠: 天空之所以看起来是蓝色的，主要是因为太阳光进入大气层后，短波长的蓝光更容易被空气分子散射，因此人眼从各个方向接收到的蓝光会更多。
@@ -498,7 +498,7 @@ python train_full_sft.py
 
 ```bash
 # 可对SFT结果做简单测试：
-python -m aislant_minimind.inference.eval_llm --weight full_sft
+python -m aislant_minimind.inference.cli.eval_llm --weight full_sft
 
 💬: 解释什么是机器学习
 🧠: 机器学习是人工智能的核心技术之一，通过算法让计算机从数据中学习规律，并持续改进预测或决策效果，常见应用包括推荐系统、图像识别、语音识别和自然语言处理。
@@ -569,16 +569,16 @@ LoRA 很适合处理“如何在尽量保留通用能力的前提下，让模型
  {"conversations": [{"role": "user", "content": "你是谁"}, {"role": "assistant", "content": "您好，我是 MiniMind，由 Jingyao Gong 创建。我的主要职责是提供准确的回答和帮助。"}]}
 ```
 
-此时可将【基模 + LoRA 权重】组合使用，从而在保留基础模型通用能力的同时，增强特定领域表现。训练完成后也可以通过 `aislant_minimind/inference/eval_llm.py` 做简单测试。
+此时可将【基模 + LoRA 权重】组合使用，从而在保留基础模型通用能力的同时，增强特定领域表现。训练完成后也可以通过 `aislant_minimind/inference/cli/eval_llm.py` 做简单测试。
 
 ```bash
 # 注意：weight参数指定基础模型类型，需与train_lora训练时使用的基础模型保持一致
-python -m aislant_minimind.inference.eval_llm --weight full_sft --lora_weight lora_medical
+python -m aislant_minimind.inference.cli.eval_llm --weight full_sft --lora_weight lora_medical
 
 👶: 我最近经常感到头晕，可能是什么原因？
 🤖️: 头晕可能是由于多种原因，包括但不限于：心脏疾病、眼睛损伤、过敏反应、皮肤问题、过敏反应、压力、焦虑、疲劳、药物副作用、性功能障碍或者其他...
 
-python -m aislant_minimind.inference.eval_llm --weight full_sft --lora_weight lora_identity
+python -m aislant_minimind.inference.cli.eval_llm --weight full_sft --lora_weight lora_identity
 
 👶: 你和openai是什么关系？
 🤖️: 我是 MiniMind，一个由 Jingyao Gong 开发的人工智能助手。我通过自然语言处理和算法训练来与用户进行交互。
@@ -623,10 +623,10 @@ Tool Calling 的 chat template 已统一支持解析为：
 <tool_response>{...tool result...}</tool_response>
 ```
 
-也可以直接通过 `aislant_minimind.inference.eval_toolcall` 做简单测试：
+也可以直接通过 `aislant_minimind.inference.cli.eval_toolcall` 做简单测试：
 
 ```bash
-python -m aislant_minimind.inference.eval_toolcall --weight full_sft
+python -m aislant_minimind.inference.cli.eval_toolcall --weight full_sft
 
 💬: 现在几点了？
 🧠: <tool_call>{"name": "get_current_time", "arguments": {"timezone": "Asia/Shanghai"}}</tool_call>
@@ -647,7 +647,7 @@ python -m aislant_minimind.inference.eval_toolcall --weight full_sft
 
 ```bash
 # 测试回答
-python -m aislant_minimind.inference.eval_llm --load_from ./aislant-minimind-3 --open_thinking 1
+python -m aislant_minimind.inference.cli.eval_llm --load_from ./aislant-minimind-3 --open_thinking 1
 ```
 
 OpenAI-API-SDK 用法：
@@ -1023,7 +1023,7 @@ python train_agent.py --rollout_engine sglang --sglang_base_url http://localhost
 
 ```bash
 # 测试最终模型 Tool Use 的能力
-python -m aislant_minimind.inference.eval_toolcall --weight agent
+python -m aislant_minimind.inference.cli.eval_toolcall --weight agent
 
 💬: 现在几点了？
 🧠: <tool_call>{"name": "get_current_time", "arguments": {"timezone": "Asia/Shanghai"}}</tool_call>
@@ -1314,10 +1314,10 @@ agent: 17/20 = 85.00%
 
 MiniMind 支持通过 YaRN 算法进行 RoPE 位置编码的长度外推，使模型能够更稳定地处理超出训练长度的文本序列。
 
-原生 torch 模型在使用 `aislant_minimind.inference.eval_llm` 进行推理时，只需添加 `--inference_rope_scaling` 参数即可启用 RoPE 外推：
+原生 torch 模型在使用 `aislant_minimind.inference.cli.eval_llm` 进行推理时，只需添加 `--inference_rope_scaling` 参数即可启用 RoPE 外推：
 
 ```bash
-python -m aislant_minimind.inference.eval_llm --weight full_sft --inference_rope_scaling
+python -m aislant_minimind.inference.cli.eval_llm --weight full_sft --inference_rope_scaling
 ```
 
 对于 `Transformers` 格式的模型，则可以在 `config.json` 中添加以下配置实现长度外推：
@@ -1412,7 +1412,7 @@ minimind-3-exam 不是更大的基座模型，也几乎没有额外注入新知�
 
 ## 🖥️ 基于 MiniMind 的 API 服务接口
 
-* [aislant_minimind/inference/serve_openai_api.py](aislant_minimind/inference/serve_openai_api.py) 提供了一个兼容 OpenAI API 的轻量聊天服务，便于将自己的模型接入 FastGPT、OpenWebUI、Dify 等第三方 UI。
+* [aislant_minimind/inference/api/serve_openai_api.py](aislant_minimind/inference/api/serve_openai_api.py) 提供了一个兼容 OpenAI API 的轻量聊天服务，便于将自己的模型接入 FastGPT、OpenWebUI、Dify 等第三方 UI。
 * 当前接口额外支持 `reasoning_content`、`tool_calls`、`open_thinking` 等字段，适合直接用于 Tool Calling / Thinking 场景。
 
 * 从 [HuggingFace](https://huggingface.co/collections/jingyaogong/minimind-66caf8d999f5c7fa64f399e5) 下载模型权重后，目录结构示例如下：
@@ -1430,11 +1430,11 @@ minimind-3-exam 不是更大的基座模型，也几乎没有额外注入新知�
 
 * 启动服务端
     ```bash
-    python -m aislant_minimind.inference.serve_openai_api
+    python -m aislant_minimind.inference.api.serve_openai_api
     ```
 * 测试服务接口
     ```bash
-    python -m aislant_minimind.inference.chat_api
+    python -m aislant_minimind.inference.api.chat_api
     ```
 * API 请求示例（兼容 OpenAI API 格式）
     ```bash

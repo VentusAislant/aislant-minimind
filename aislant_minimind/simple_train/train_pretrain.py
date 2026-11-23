@@ -1,260 +1,216 @@
-from pathlib import Path
+"""MiniMind 多卡预训练（DDP，torchrun 启动）。"""
 
-import datasets  # noqa: F401  # Windows pyarrow/torch DLL conflict workaround (issue #771)
 import argparse
 import math
+import os
 import time
-import warnings
-import torch
-import torch.distributed as dist
 from contextlib import nullcontext
+from pathlib import Path
+
+import datasets  # noqa: F401  # Windows pyarrow/torch DLL conflict workaround
+import torch
+import torch.distributed as dist  # [DDP]
 from torch import optim
-from torch.nn.parallel import DistributedDataParallel
-from torch.utils.data import DataLoader, DistributedSampler, RandomSampler
+from torch.nn.parallel import DistributedDataParallel as DDP  # [DDP]
+from torch.utils.data import DataLoader
+from torch.utils.data.distributed import DistributedSampler  # [DDP]
 from transformers import AutoTokenizer
 
-from ..model.modeling_minimind_llama import MiniMindLlamaConfig, MiniMindLlamaForCausalLM
 from ..dataset.lm_dataset import PretrainDataset
-from .utils import Logger, is_main_process, init_distributed_mode, setup_seed, \
-    resolve_dtype
-
-warnings.filterwarnings('ignore')
+from ..model.modeling_minimind_llama import MiniMindLlamaConfig, MiniMindLlamaForCausalLM
+from .utils import Logger, resolve_dtype, setup_seed
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="MiniMind Pretraining")
-    # 1. 基本参数
-    # 预训练需要特别指定 tokenizer 路径
-    parser.add_argument("--model_path", type=str, default=None,
-                        help="模型路径，None 表示从0训练，传入路径可以基于已有权重继续训练")
-    parser.add_argument("--tokenizer_path", type=str, default=None,
-                        help="从头训练时使用的 tokenizer 路径")
-    parser.add_argument("--data_path", type=str, required=True, help="预训练数据路径，相对路径从项目根目录解析")
-    parser.add_argument("--output_dir", type=str, default="outputs/simple_pretrain",
-                        help="模型输出目录，相对路径从项目根目录解析")
+    parser = argparse.ArgumentParser(description="MiniMind 预训练 (支持多卡)")
+    parser.add_argument("--model_path", type=str, default=None, help="已有 Hugging Face 模型目录")
+    parser.add_argument("--tokenizer_path", type=str, default=None, help="从头训练时使用的 tokenizer 目录")
+    parser.add_argument("--data_path", type=str, required=True)
+    parser.add_argument("--output_dir", type=Path, default=Path("outputs/simple_pretrain_ddp"))
 
-    # 2. 模型相关
-    parser.add_argument('--hidden_size', default=512, type=int, help="隐藏层维度")
-    parser.add_argument('--num_hidden_layers', default=4, type=int, help="隐藏层数量")
-    parser.add_argument('--max_seq_len', default=340, type=int, help="训练的最大截断长度（中文1token≈1.5~1.7字符）")
-    parser.add_argument('--use_moe', default=0, type=int, choices=[0, 1], help="是否使用MoE架构（0=否，1=是）")
+    parser.add_argument("--hidden_size", type=int, default=512)
+    parser.add_argument("--num_hidden_layers", type=int, default=4)
+    parser.add_argument("--max_seq_len", type=int, default=340)
+    parser.add_argument("--use_moe", action="store_true")
 
-    # 3. 训练相关
-    parser.add_argument("--epochs", type=int, default=2, help="训练轮数")
-    parser.add_argument("--batch_size", type=int, default=32, help="batch size")
-    parser.add_argument("--learning_rate", type=float, default=5e-4, help="初始学习率")
-    parser.add_argument("--warmup_ratio", type=float, default=0.0, help="线性warmup占总步数比例，0为关闭")
-    parser.add_argument("--device", type=str, default="cuda:0" if torch.cuda.is_available() else "cpu", help="训练设备")
-    parser.add_argument("--dtype", type=str, default="bfloat16", choices=["bfloat16", "float16", "float32"],
-                        help="混合精度类型")
-    parser.add_argument("--num_workers", type=int, default=8, help="数据加载线程数")
-    parser.add_argument("--accumulation_steps", type=int, default=8, help="梯度累积步数")
-    parser.add_argument("--grad_clip", type=float, default=1.0, help="梯度裁剪阈值")
-    parser.add_argument("--log_interval", type=int, default=100, help="日志打印间隔")
-    parser.add_argument('--seed', default=42, type=int, help="随机种子（DDP下每个rank为seed+rank，每轮为seed+epoch）")
-    parser.add_argument("--use_wandb", action="store_true", help="是否使用wandb")
-    parser.add_argument("--wandb_project", type=str, default="MiniMind-Pretrain", help="wandb项目名")
-    parser.add_argument("--use_compile", default=0, type=int, choices=[0, 1],
-                        help="是否使用torch.compile加速（0=否，1=是）")
+    parser.add_argument("--epochs", type=int, default=2)
+    parser.add_argument("--batch_size", type=int, default=32, help="每张卡的 batch size")
+    parser.add_argument("--learning_rate", type=float, default=5e-4)
+    parser.add_argument("--accumulation_steps", type=int, default=8)
+    parser.add_argument("--grad_clip", type=float, default=1.0)
+    parser.add_argument("--dtype", choices=["bfloat16", "float16", "float32"], default="bfloat16")
+    parser.add_argument("--num_workers", type=int, default=8, help="每个进程的 worker 数")
+    parser.add_argument("--log_interval", type=int, default=100)
+    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--use_wandb", action="store_true")
+    parser.add_argument("--wandb_project", type=str, default="MiniMind-Pretrain")
+    return parser.parse_args()
 
-    args = parser.parse_args()
-    args.output_dir = Path(args.output_dir)
 
-    return args
+# [DDP] 初始化分布式环境；没用 torchrun 启动时自动退化为单卡
+def init_distributed():
+    if "RANK" not in os.environ:
+        return False, 0, 0, 1
+    rank = int(os.environ["RANK"])
+    local_rank = int(os.environ["LOCAL_RANK"])
+    world_size = int(os.environ["WORLD_SIZE"])
+    backend = "nccl" if torch.cuda.is_available() else "gloo"
+    dist.init_process_group(backend=backend)
+    if torch.cuda.is_available():
+        torch.cuda.set_device(local_rank)
+    return True, rank, local_rank, world_size
 
 
 if __name__ == "__main__":
     """
-    从项目根目录运行。
+    从项目根目录运行（4 卡示例）：
 
-    单卡训练：
-    python -m aislant_minimind.simple_train.train_pretrain \
-        --tokenizer_path model_weights/tokenizers/llama \
-        --data_path data/pretrain_t2t_mini.jsonl \
-        --output_dir outputs/simple_pretrain
-
-    多卡训练（例如使用 2 张可见 GPU）：
-    torchrun --standalone --nproc_per_node=2 \
-        -m aislant_minimind.simple_train.train_pretrain \
+    torchrun --nproc_per_node=4 -m aislant_minimind.simple_train.train_pretrain \
         --tokenizer_path model_weights/tokenizers/llama \
         --data_path data/pretrain_t2t_mini.jsonl \
         --output_dir outputs/simple_pretrain
     """
     args = parse_args()
 
-    # ========== 1. 初始化环境和随机种子， 配置目录，设置混合精度==========
-    local_rank = init_distributed_mode()
-    if dist.is_initialized():  # 多卡环境，获取当前卡的设备号
-        args.device = f"cuda:{local_rank}"
-        setup_seed(args.seed + dist.get_rank())
+    # [DDP] 0. 分布式初始化
+    ddp, rank, local_rank, world_size = init_distributed()
+    is_main = rank == 0
+    setup_seed(args.seed + rank)  # 每个进程种子不同，dropout 等随机性不重复
+
+    # 1. 设备与混合精度
+    if torch.cuda.is_available():
+        device = torch.device("cuda", local_rank)  # [DDP] 每个进程绑定自己的卡
     else:
-        setup_seed(args.seed)
-
-    args.output_dir.mkdir(parents=True, exist_ok=True)
-
-    device_type = "cuda" if torch.device(args.device).type == "cuda" else "cpu"
-    args.dtype = resolve_dtype(args.dtype, args.device)
+        device = torch.device("cpu")
+    args.dtype = resolve_dtype(args.dtype, device)
     dtype = getattr(torch, args.dtype)
-    if device_type == 'cpu':
-        autocast_ctx = nullcontext()
-    else:
-        autocast_ctx = torch.amp.autocast(device_type="cuda", dtype=dtype)
+    autocast_ctx = nullcontext() if device.type == "cpu" else torch.amp.autocast("cuda", dtype=dtype)
+    scaler = torch.amp.GradScaler("cuda", enabled=(device.type == "cuda" and dtype == torch.float16))
 
-    scaler = torch.amp.GradScaler(device="cuda", enabled=(dtype == torch.float16))
-
-    # ========== 2. 定义模型、数据、优化器 ==========
-    if args.model_path is not None:
-        # 加载已有 Hugging Face 模型，开始一次新的训练。
-        model = MiniMindLlamaForCausalLM.from_pretrained(args.model_path)
+    # 2. 模型与 tokenizer
+    if args.model_path:
         tokenizer = AutoTokenizer.from_pretrained(args.model_path)
-
+        model = MiniMindLlamaForCausalLM.from_pretrained(args.model_path)
     else:
-        # 只加载 tokenizer，模型参数随机初始化。
         if args.tokenizer_path is None:
             raise ValueError("从头训练必须指定 tokenizer_path")
-
         tokenizer = AutoTokenizer.from_pretrained(args.tokenizer_path)
-        model_config = MiniMindLlamaConfig(
+        config = MiniMindLlamaConfig(
             vocab_size=len(tokenizer),
             pad_token_id=tokenizer.pad_token_id,
             bos_token_id=tokenizer.bos_token_id,
             eos_token_id=tokenizer.eos_token_id,
             hidden_size=args.hidden_size,
             num_hidden_layers=args.num_hidden_layers,
-            use_moe=bool(args.use_moe),
+            use_moe=args.use_moe,
         )
-        model = MiniMindLlamaForCausalLM(model_config)
+        model = MiniMindLlamaForCausalLM(config)
+    model.to(device).train()
 
-    model = model.to(args.device)
+    # [DDP] 包装模型（构造时会把 rank0 的参数广播给其他卡）
+    raw_model = model
+    if ddp:
+        model = DDP(
+            model,
+            device_ids=[local_rank] if device.type == "cuda" else None
+        )
 
-    train_dataset = PretrainDataset(
-        args.data_path,
-        tokenizer,
-        max_length=args.max_seq_len,
-    )
-    train_sampler = (
-        DistributedSampler(train_dataset)
-        if dist.is_initialized()
-        else RandomSampler(train_dataset)
+    # 3. 数据、优化器与学习率
+    dataset = PretrainDataset(args.data_path, tokenizer, max_length=args.max_seq_len)
+    # [DDP] 用 DistributedSampler 切分数据，此时 DataLoader 不能再 shuffle=True
+    sampler = DistributedSampler(dataset, num_replicas=world_size, rank=rank, shuffle=True,
+                                 seed=args.seed) if ddp else None
+    loader = DataLoader(
+        dataset,
+        batch_size=args.batch_size,
+        shuffle=(sampler is None),
+        sampler=sampler,
+        num_workers=args.num_workers,
+        pin_memory=(device.type == "cuda")
     )
     optimizer = optim.AdamW(model.parameters(), lr=args.learning_rate)
-
-    # scheduler 每次 optimizer 更新后前进一步，而不是每个 batch 前进一步。
-    steps_per_epoch = math.ceil(len(train_sampler) / args.batch_size)
-    updates_per_epoch = math.ceil(steps_per_epoch / args.accumulation_steps)
-    total_updates = updates_per_epoch * args.epochs
-    warmup_updates = int(total_updates * args.warmup_ratio)
-    cosine_updates = max(1, total_updates - warmup_updates)
-
-    cosine_scheduler = optim.lr_scheduler.CosineAnnealingLR(
+    updates_per_epoch = math.ceil(len(loader) / args.accumulation_steps)  # len(loader) 已是单卡的步数
+    scheduler = optim.lr_scheduler.CosineAnnealingLR(
         optimizer,
-        T_max=cosine_updates,
+        T_max=updates_per_epoch * args.epochs,
         eta_min=args.learning_rate * 0.1,
     )
-    if warmup_updates > 0:
-        warmup_scheduler = optim.lr_scheduler.LinearLR(
-            optimizer,
-            start_factor=0.01,
-            end_factor=1.0,
-            total_iters=warmup_updates,
+
+    wandb_run = None
+    if args.use_wandb and is_main:
+        import wandb
+
+        wandb_run = wandb.init(
+            project=args.wandb_project,
+            name=f"pretrain-ddp-{world_size}gpu-{args.hidden_size}d-{args.num_hidden_layers}l",
+            mode="offline",
         )
-        lr_scheduler = optim.lr_scheduler.SequentialLR(
-            optimizer,
-            schedulers=[warmup_scheduler, cosine_scheduler],
-            milestones=[warmup_updates],
-        )
-    else:
-        lr_scheduler = cosine_scheduler
+        Logger(f"W&B offline 日志目录: {wandb_run.dir}", level="wandb")
 
-    # ========== 4. 配wandb ==========
-    wandb = None
-    if args.use_wandb and is_main_process():
-        import swanlab as wandb
-
-        wandb_run_name = f"MiniMind-Pretrain-Epoch-{args.epochs}-BatchSize-{args.batch_size}-LearningRate-{args.learning_rate}"
-        wandb.init(project=args.wandb_project, name=wandb_run_name)
-
-    # ========== 5. 编译和分布式包装 ==========
-    if args.use_compile == 1:
-        model = torch.compile(model)
-        Logger('torch.compile enabled')
-    if dist.is_initialized():
-        model = DistributedDataParallel(model, device_ids=[local_rank])
-
-    # ========== 6. 开始训练 ==========
-    model.train()
+    # 4. 训练
+    optimizer.zero_grad(set_to_none=True)
     for epoch in range(args.epochs):
-        rank = dist.get_rank() if dist.is_initialized() else 0
-        setup_seed(args.seed + epoch + rank)
-        if isinstance(train_sampler, DistributedSampler):
-            train_sampler.set_epoch(epoch)
-
-        loader = DataLoader(
-            train_dataset,
-            batch_size=args.batch_size,
-            sampler=train_sampler,
-            num_workers=args.num_workers,
-            pin_memory=True,
-        )
-
+        if sampler is not None:
+            sampler.set_epoch(epoch)  # [DDP] 每个 epoch 打乱顺序不同，必须调用
         start_time = time.time()
-        iters = len(loader)
-        tail_steps = iters % args.accumulation_steps
+        tail_steps = len(loader) % args.accumulation_steps
+
         for step, (input_ids, labels) in enumerate(loader, start=1):
-            input_ids = input_ids.to(args.device)
-            labels = labels.to(args.device)
+            input_ids = input_ids.to(device)
+            labels = labels.to(device)
 
-            with autocast_ctx:
-                res = model(input_ids, labels=labels)
-                loss = res.loss + res.aux_loss
-                current_accumulation_steps = args.accumulation_steps
-                if tail_steps > 0 and step > iters - tail_steps:
-                    current_accumulation_steps = tail_steps
-                loss = loss / current_accumulation_steps
+            accumulation = args.accumulation_steps
+            if tail_steps and step > len(loader) - tail_steps:
+                accumulation = tail_steps
 
-            scaler.scale(loss).backward()
+            is_update = step % args.accumulation_steps == 0 or step == len(loader)
 
-            optimizer_updated = step % args.accumulation_steps == 0 or step == iters
-            if optimizer_updated:
+            # [DDP] 梯度累积的中间步不做 all-reduce，只在更新步同步，省通信
+            sync_ctx = model.no_sync() if (ddp and not is_update) else nullcontext()
+            with sync_ctx:
+                with autocast_ctx:
+                    outputs = model(input_ids, labels=labels)
+                    loss = (outputs.loss + outputs.aux_loss) / accumulation
+                scaler.scale(loss).backward()
+
+            if is_update:
                 scaler.unscale_(optimizer)
                 torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip)
                 scaler.step(optimizer)
                 scaler.update()
-                lr_scheduler.step()
                 optimizer.zero_grad(set_to_none=True)
+                scheduler.step()
 
-            if step % args.log_interval == 0 or step == iters:
-                spend_time = time.time() - start_time
-                current_loss = loss.item() * current_accumulation_steps
-                current_aux_loss = res.aux_loss.item() if res.aux_loss is not None else 0.0
-                current_logits_loss = current_loss - current_aux_loss
-                current_lr = optimizer.param_groups[-1]['lr']
-                eta_min = spend_time / step * (iters - step) // 60
-                Logger(
-                    f'Epoch:[{epoch + 1}/{args.epochs}]({step}/{iters}), loss: {current_loss:.4f}, '
-                    f'logits_loss: {current_logits_loss:.4f}, aux_loss: {current_aux_loss:.4f}, '
-                    f'lr: {current_lr:.8f}, epoch_time: {eta_min:.1f}min'
-                )
-                if wandb:
-                    wandb.log({
-                        "loss": current_loss,
-                        "logits_loss": current_logits_loss,
-                        "aux_loss": current_aux_loss,
-                        "learning_rate": current_lr,
-                        "epoch_time": eta_min,
-                    })
+            if step % args.log_interval == 0 or step == len(loader):
+                log_loss = loss.detach() * accumulation
+                if ddp:  # [DDP] 所有卡都要参与 all_reduce，所以放在 is_main 判断之外
+                    dist.all_reduce(log_loss, op=dist.ReduceOp.AVG)
+                if is_main:
+                    elapsed = time.time() - start_time
+                    Logger(
+                        f"Epoch [{epoch + 1}/{args.epochs}] Step [{step}/{len(loader)}] "
+                        f"loss={log_loss.item():.4f} "
+                        f"lr={optimizer.param_groups[0]['lr']:.8f} "
+                        f"time={elapsed:.1f}s",
+                        level="train",
+                    )
+                    if wandb_run:
+                        wandb_run.log({
+                            "loss": log_loss.item(),
+                            "learning_rate": optimizer.param_groups[0]["lr"],
+                            "epoch": epoch + 1,
+                        })
 
-            del input_ids, labels, res, loss
-
-    # 最终模型始终保存到 output_dir，供推理或下一阶段训练直接加载。
-    if is_main_process():
-        raw_model = model.module if isinstance(model, DistributedDataParallel) else model
-        raw_model = getattr(raw_model, "_orig_mod", raw_model)
-        raw_model.save_pretrained(args.output_dir, safe_serialization=True)
-        tokenizer.save_pretrained(args.output_dir)
-        Logger(f"最终模型已保存到 {args.output_dir}")
-
-    # ========== 9. 清理分布进程 ==========
-    if dist.is_initialized():
+    # 5. 只在主进程保存最终 Hugging Face 模型
+    if ddp:
         dist.barrier()
+    if is_main:
+        args.output_dir.mkdir(parents=True, exist_ok=True)
+        raw_model.save_pretrained(args.output_dir, safe_serialization=True)  # [DDP] 存 module 而不是 DDP 包装
+        tokenizer.save_pretrained(args.output_dir)
+        Logger(f"模型已保存到 {args.output_dir}", level="save")
+        if wandb_run:
+            wandb_run.finish()
+
+    if ddp:
         dist.destroy_process_group()
