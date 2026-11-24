@@ -102,29 +102,67 @@ class PretrainDataset(Dataset):
 
 
 if __name__ == '__main__':
-    # 简洁测试
+    # 从项目根目录运行：python -m aislant_minimind.dataset.lm_dataset.pretrain
     from pathlib import Path
     from transformers import AutoTokenizer
 
     project_root = Path(__file__).resolve().parents[3]
     tokenizer_path = project_root / "model_weights" / "tokenizers" / "aislant_minimind_llama"
-    print(tokenizer_path)
+    dataset_path = project_root / "data" / "pretrain_t2t_mini.jsonl"
+
     tokenizer = AutoTokenizer.from_pretrained(
         tokenizer_path,
         local_files_only=True,
     )
-    print(tokenizer)
+    dataset = PretrainDataset(
+        data_path=str(dataset_path),
+        tokenizer=tokenizer,
+        max_length=512,
+    )
 
-    dataset_path = project_root / "data" / "pretrain_t2t_mini.jsonl"
-    pretrain_dataset = PretrainDataset(data_path=str(dataset_path), tokenizer=tokenizer)
-    print(len(pretrain_dataset))
-    print(tokenizer.bos_token_id, tokenizer.eos_token_id, tokenizer.pad_token_id)  # 三个应互不相同
-    samples = [pretrain_dataset[0], pretrain_dataset[1]]
-    for index, (input_ids, labels) in enumerate(samples):
-        print(f"样本 {index}：", input_ids.shape, labels.shape)
-        print(tokenizer.decode(input_ids, skip_special_tokens=False))
+    print("数据集大小：", len(dataset))
+    print(
+        "特殊 token id：",
+        f"bos={tokenizer.bos_token_id}",
+        f"eos={tokenizer.eos_token_id}",
+        f"pad={tokenizer.pad_token_id}",
+    )
+
+    GREEN, RED_BOLD, RESET = "\033[32m", "\033[1;31m", "\033[0m"
+    color = lambda text, on: f"{GREEN}{text}{RESET}" if on else text
+    title = lambda text: f"{RED_BOLD}{text}{RESET}"
+
+    samples = [dataset[0], dataset[1]]
+    for sample_index, (input_ids, labels) in enumerate(samples):
+        ids, labs = input_ids.tolist(), labels.tolist()
+
+        # PretrainDataset 不做 padding，因此当前所有 token 都参与 loss。
+        text = color(
+            tokenizer.decode(ids, skip_special_tokens=False),
+            on=True,
+        )
+
+        print(
+            f"\n===== 样本 {sample_index}"
+            f"（有效 {len(ids)} 个 token，绿色 = 参与 loss）====="
+        )
+        print(title("\n[labels]"))
+        print(" ".join(color(str(label), label != -100) for label in labs))
+        print(title("\n[input_ids]"))
+        print(" ".join(
+            color(str(token_id), label != -100)
+            for token_id, label in zip(ids, labs)
+        ))
+        print(title("\n[input_ids 对应的文本]"))
+        print(text)
+
+        assert len(ids) == len(labs) <= 512
+        assert ids[0] == tokenizer.bos_token_id
+        assert ids[-1] == tokenizer.eos_token_id
+        assert all(label != -100 for label in labs)
 
     collator = PretrainCollator(tokenizer.pad_token_id)
     batch_input_ids, batch_labels = collator(samples)
-    print("动态 padding 后：", batch_input_ids.shape, batch_labels.shape)
-    print("每个样本的 padding 数：", (batch_labels == -100).sum(dim=1).tolist())
+    print(title("\n[动态 padding 后的 batch]"))
+    print("batch shape:", batch_input_ids.shape, batch_labels.shape)
+    print("每个样本中被忽略的 label 数:", (batch_labels == -100).sum(dim=1).tolist())

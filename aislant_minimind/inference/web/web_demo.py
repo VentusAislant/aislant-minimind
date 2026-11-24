@@ -349,7 +349,26 @@ if prompt:
     else:
         # Pretrain 模型没有学习对话模板，直接对当前文本做续写。
         input_text = prompt
-    inputs = tokenizer(input_text, return_tensors="pt", truncation=True).to(device)
+    # chat template 已经负责安排特殊 token，因此这里不让 tokenizer 重复添加。
+    inputs = tokenizer(
+        input_text,
+        return_tensors="pt",
+        truncation=True,
+        add_special_tokens=False,
+    )
+    if inference_mode == COMPLETION_MODE and tokenizer.bos_token_id is not None:
+        # PretrainDataset 训练时手工在原文前添加 BOS，补全推理必须保持相同格式。
+        bos = torch.full(
+            (inputs.input_ids.shape[0], 1),
+            tokenizer.bos_token_id,
+            dtype=inputs.input_ids.dtype,
+        )
+        inputs["input_ids"] = torch.cat((bos, inputs.input_ids), dim=1)
+        inputs["attention_mask"] = torch.cat(
+            (torch.ones_like(bos), inputs.attention_mask),
+            dim=1,
+        )
+    inputs = inputs.to(device)
     streamer = TextIteratorStreamer(
         tokenizer,
         skip_prompt=True,

@@ -82,7 +82,6 @@ if __name__ == "__main__":
     ddp, rank, local_rank, world_size = init_distributed()
     is_main = rank == 0
     setup_seed(args.seed + rank)  # 每个进程种子不同，dropout 等随机性不重复
-    # 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
     # 1. 设备与混合精度
     if torch.cuda.is_available():
         device = torch.device("cuda", local_rank)  # [DDP] 每个进程绑定自己的卡
