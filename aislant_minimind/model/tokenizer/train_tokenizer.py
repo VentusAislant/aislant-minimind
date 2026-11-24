@@ -47,13 +47,16 @@ import argparse
 import json
 from pathlib import Path
 
-from tokenizers import decoders, models, pre_tokenizers, trainers, Tokenizer
+from tokenizers import AddedToken, decoders, models, pre_tokenizers, trainers, Tokenizer
+from transformers import PreTrainedTokenizerFast
 from tqdm.auto import tqdm
 
 from .chat_template import CHAT_TEMPLATE
 from .exrtra_tokens import (
+    ADDITIONAL_TOKENS,
     ALL_SPECIAL_TOKENS,
     ALL_TOKENS,
+    BUFFER_TOKENS,
     CORE_SPECIAL_TOKENS,
     OTHER_SPECIAL_TOKENS,
 )
@@ -216,63 +219,34 @@ def train_tokenizer(
     )  # 开始训练：反复合并最频繁的相邻 token 对
     tokenizer.decoder = decoders.ByteLevel()  # 解码器：把字节字符还原成原始文本，要和预分词配套
     tokenizer.add_special_tokens(ALL_SPECIAL_TOKENS)
+    tokenizer.add_tokens([
+        AddedToken(token, special=False, normalized=False, lstrip=False, rstrip=False)
+        for token in ADDITIONAL_TOKENS + BUFFER_TOKENS
+    ])
 
-    # 同时保存统一的 tokenizer.json 和兼容 BPE 的 vocab/merges 文件。
+    # 直接包装为 Hugging Face tokenizer，并通过统一接口一次保存全部配置。
+    hf_tokenizer = PreTrainedTokenizerFast(
+        tokenizer_object=tokenizer,
+        bos_token=CORE_SPECIAL_TOKENS["bos_token"],
+        eos_token=CORE_SPECIAL_TOKENS["eos_token"],
+        pad_token=CORE_SPECIAL_TOKENS["pad_token"],
+        additional_special_tokens=OTHER_SPECIAL_TOKENS,
+        model_max_length=model_max_length,
+        chat_template=CHAT_TEMPLATE,
+        clean_up_tokenization_spaces=False,
+        image_token="<|image_pad|>",
+        audio_token="<|audio_pad|>",
+        video_token="<|video_pad|>",
+        vision_bos_token="<|vision_start|>",
+        vision_eos_token="<|vision_end|>",
+        audio_bos_token="<|audio_start|>",
+        audio_eos_token="<|audio_end|>",
+    )
     tokenizer_dir.mkdir(parents=True, exist_ok=True)
-    tokenizer.save(str(tokenizer_dir / "tokenizer.json"))
-    tokenizer.model.save(str(tokenizer_dir))
-    tokenizer_json_path = tokenizer_dir / "tokenizer.json"
-    with open(tokenizer_json_path, 'r', encoding='utf-8') as f:
-        tokenizer_data = json.load(f)
-    for token_info in tokenizer_data.get('added_tokens', []):
-        if token_info['content'] not in ALL_SPECIAL_TOKENS:
-            token_info['special'] = False
-    with open(tokenizer_json_path, 'w', encoding='utf-8') as f:
-        json.dump(tokenizer_data, f, ensure_ascii=False, indent=2)
+    hf_tokenizer.save_pretrained(tokenizer_dir)
 
-    # 构造 Transformers 加载时使用的特殊 token 元数据。
-    added_tokens_decoder = {}
-    for token in ALL_TOKENS:
-        idx = tokenizer.token_to_id(token)
-        added_tokens_decoder[str(idx)] = {
-            "content": token,
-            "lstrip": False,
-            "normalized": False,
-            "rstrip": False,
-            "single_word": False,
-            "special": token in ALL_SPECIAL_TOKENS
-        }
-
-    config = {
-        "add_bos_token": False,
-        "add_eos_token": False,
-        "add_prefix_space": False,
-        "added_tokens_decoder": added_tokens_decoder,
-        "additional_special_tokens": OTHER_SPECIAL_TOKENS,
-        "bos_token": CORE_SPECIAL_TOKENS["bos_token"],
-        "clean_up_tokenization_spaces": False,
-        "eos_token": CORE_SPECIAL_TOKENS["eos_token"],
-        "legacy": True,
-        "model_max_length": model_max_length,
-        "pad_token": CORE_SPECIAL_TOKENS["pad_token"],
-        "sp_model_kwargs": {},
-        "spaces_between_special_tokens": False,
-        "unk_token": None,
-        "image_token": "<|image_pad|>",
-        "audio_token": "<|audio_pad|>",
-        "video_token": "<|video_pad|>",
-        "vision_bos_token": "<|vision_start|>",
-        "vision_eos_token": "<|vision_end|>",
-        "audio_bos_token": "<|audio_start|>",
-        "audio_eos_token": "<|audio_end|>",
-        "chat_template": CHAT_TEMPLATE,
-        "tokenizer_class": "PreTrainedTokenizerFast"
-    }
-
-    with open(tokenizer_dir / "tokenizer_config.json", "w", encoding="utf-8") as f:
-        json.dump(config, f, ensure_ascii=False, indent=4)
     print(f"Tokenizer training completed: {tokenizer_dir}")
-    print(f"Vocabulary size: {tokenizer.get_vocab_size()}")
+    print(f"Vocabulary size: {len(hf_tokenizer)}")
 
 
 def eval_tokenizer(tokenizer_dir):
