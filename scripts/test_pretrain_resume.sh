@@ -6,7 +6,7 @@ PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${PROJECT_ROOT}"
 
 DATA_PATH="tests/data/pretrain_resume_80.jsonl"
-TOKENIZER_PATH="model_weights/tokenizers/llama"
+TOKENIZER_PATH="model_weights/tokenizers/Llama-2-7b-hf"
 
 # 这是端到端流程测试，使用小模型缩短运行时间。
 # 80 条数据 / 2 张卡 / batch_size 4 = 每个 rank 每个 epoch 10 个 batch。

@@ -7,7 +7,7 @@ PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${PROJECT_ROOT}"
 
 python -m aislant_minimind.trainer.train_pretrain \
-  --tokenizer_path model_weights/tokenizers/llama \
+  --tokenizer_path model_weights/tokenizers/Llama-2-7b-hf \
   --data_path data/pretrain_t2t_mini.jsonl \
   --output_dir outputs/pretrain \
   --hidden_size 768 \

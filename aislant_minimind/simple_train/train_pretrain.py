@@ -3,8 +3,14 @@
 import argparse
 import math
 import os
+import sys
 from contextlib import nullcontext
 from pathlib import Path
+
+# 可以支持 python xxx/train_pretrain.py 直接运行
+__package__ = "aislant_minimind.elegant_train"
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(PROJECT_ROOT))
 
 import datasets  # noqa: F401  # Windows pyarrow/torch DLL conflict workaround
 import torch
@@ -66,7 +72,7 @@ if __name__ == "__main__":
     从项目根目录运行（4 卡示例）：
 
     torchrun --nproc_per_node=4 -m aislant_minimind.simple_train.train_pretrain \
-        --tokenizer_path model_weights/tokenizers/llama \
+        --tokenizer_path model_weights/tokenizers/Llama-2-7b-hf \
         --data_path data/pretrain_t2t_mini.jsonl \
         --output_dir outputs/simple_pretrain
     """
@@ -76,7 +82,7 @@ if __name__ == "__main__":
     ddp, rank, local_rank, world_size = init_distributed()
     is_main = rank == 0
     setup_seed(args.seed + rank)  # 每个进程种子不同，dropout 等随机性不重复
-
+    # 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
     # 1. 设备与混合精度
     if torch.cuda.is_available():
         device = torch.device("cuda", local_rank)  # [DDP] 每个进程绑定自己的卡

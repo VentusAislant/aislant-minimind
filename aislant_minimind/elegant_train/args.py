@@ -11,7 +11,7 @@ def build_parser(description="MiniMind Training", **defaults):
     """
     parser = argparse.ArgumentParser(description=description)
     parser.add_argument("--save_dir", type=str, default="../outputs", help="模型保存目录")
-    parser.add_argument("--tokenizer_path", type=str, default="model_weights/tokenizers/llama",
+    parser.add_argument("--tokenizer_path", type=str, default="model_weights/tokenizers/Llama-2-7b-hf",
                         help="Tokenizer 路径")
     parser.add_argument("--save_weight", type=str, default="model", help="保存权重的前缀名")
     parser.add_argument("--epochs", type=int, default=2, help="训练轮数")

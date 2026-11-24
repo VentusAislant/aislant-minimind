@@ -23,7 +23,7 @@ from aislant_minimind.model.modeling_minimind_llama import MiniMindLlamaForCausa
 
 st.set_page_config(
     page_title="Aislant Minimind",
-    page_icon="🤖",
+    page_icon=":material/smart_toy:",
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -74,16 +74,6 @@ st.markdown(
         font-size: 1rem;
         font-weight: 650;
     }
-    .brand-mark {
-        width: 34px;
-        height: 34px;
-        display: grid;
-        place-items: center;
-        border-radius: 50%;
-        color: #202123;
-        background: #eeeeee;
-        font-size: 1rem;
-    }
     .model-status {
         color: #6b6b6b;
         font-size: 0.85rem;
@@ -96,35 +86,86 @@ st.markdown(
         line-height: 1.75;
         font-size: 1rem;
     }
+    [data-testid="stChatMessageAvatarAssistant"] {
+        color: #202123;
+        background: #f2f2f2;
+        border: 1px solid #dedede;
+    }
+    [data-testid="stChatMessageAvatarAssistant"] * {
+        color: #202123;
+    }
+    [data-testid="stChatMessageAvatarUser"] {
+        position: relative;
+        color: #ffffff;
+        background: #202123;
+        border: 1px solid #202123;
+    }
+    [data-testid="stChatMessageAvatarUser"] * {
+        display: none;
+    }
+    [data-testid="stChatMessageAvatarUser"]::before {
+        content: "";
+        position: absolute;
+        top: 7px;
+        left: 50%;
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: #ffffff;
+        transform: translateX(-50%);
+    }
+    [data-testid="stChatMessageAvatarUser"]::after {
+        content: "";
+        position: absolute;
+        bottom: 6px;
+        left: 50%;
+        width: 15px;
+        height: 8px;
+        border-radius: 9px 9px 4px 4px;
+        background: #ffffff;
+        transform: translateX(-50%);
+    }
     [data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarUser"]) {
         flex-direction: row-reverse;
+        justify-content: flex-start;
     }
     [data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarUser"])
     [data-testid="stChatMessageContent"] {
         background: #eef6ff;
         border-radius: 18px;
         padding: 0.65rem 1rem;
+        width: fit-content;
+        flex: 0 1 auto;
         max-width: 72%;
         margin-left: auto;
+        margin-right: 0;
     }
     [data-testid="stChatInput"] {
         max-width: 820px;
         margin: 0 auto 1rem;
     }
+    [data-testid="stChatInput"] > div {
+        background: #f4f4f4 !important;
+        border: 1px solid #d7d7d7 !important;
+        border-radius: 26px !important;
+        box-shadow: none !important;
+    }
+    [data-testid="stChatInput"]:focus-within > div {
+        border-color: #9b9b9b !important;
+        box-shadow: none !important;
+    }
+    [data-testid="stChatInput"] [data-baseweb="textarea"],
+    [data-testid="stChatInput"] [data-baseweb="base-input"],
+    [data-testid="stChatInput"] textarea,
+    [data-testid="stChatInput"] textarea:focus {
+        background: transparent !important;
+        border: 0 !important;
+        outline: 0 !important;
+        box-shadow: none !important;
+    }
     .welcome {
         text-align: center;
         padding: 13vh 1rem 5rem;
-    }
-    .robot-mark {
-        width: 58px;
-        height: 58px;
-        display: grid;
-        place-items: center;
-        margin: 0 auto 1rem;
-        border-radius: 18px;
-        background: #f0f0f0;
-        border: 1px solid #e3e3e3;
-        font-size: 1.7rem;
     }
     .welcome h1 {
         font-size: 2rem;
@@ -163,7 +204,7 @@ def clear_chat():
 
 
 with st.sidebar:
-    st.markdown("## 🤖 Aislant Minimind")
+    st.markdown("## Aislant Minimind")
     st.caption("本地智能助手")
     st.divider()
 
@@ -183,7 +224,7 @@ with st.sidebar:
 st.markdown(
     f"""
     <div class="chat-header">
-        <div class="brand"><span class="brand-mark">🤖</span>Aislant Minimind</div>
+        <div class="brand">Aislant Minimind</div>
         <div class="model-status">{escape(Path(model_path).name)}</div>
     </div>
     """,
@@ -197,7 +238,6 @@ if not st.session_state.messages:
     st.markdown(
         """
         <div class="welcome">
-            <div class="robot-mark">🤖</div>
             <h1>有什么可以帮忙的？</h1>
             <p>与 Aislant Minimind 开始一段对话</p>
         </div>
@@ -206,8 +246,7 @@ if not st.session_state.messages:
     )
 
 for message in st.session_state.messages:
-    avatar = "🤖" if message["role"] == "assistant" else "🙂"
-    with st.chat_message(message["role"], avatar=avatar):
+    with st.chat_message(message["role"]):
         if message.get("thinking") and show_thinking:
             with st.expander("思考过程", expanded=False):
                 st.markdown(message["thinking"])
@@ -216,7 +255,7 @@ for message in st.session_state.messages:
 prompt = st.chat_input("给 Aislant Minimind 发送消息")
 if prompt:
     st.session_state.messages.append({"role": "user", "content": prompt})
-    with st.chat_message("user", avatar="🙂"):
+    with st.chat_message("user"):
         st.markdown(prompt)
 
     try:
@@ -255,7 +294,7 @@ if prompt:
 
     Thread(target=model.generate, kwargs=generation_kwargs, daemon=True).start()
 
-    with st.chat_message("assistant", avatar="🤖"):
+    with st.chat_message("assistant"):
         placeholder = st.empty()
         raw_response = ""
         for text in streamer:

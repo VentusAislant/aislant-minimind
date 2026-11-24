@@ -1,4 +1,5 @@
 .streamlit
+outputs/
 data/
 data
 !tests/data/

@@ -26,14 +26,6 @@
       "rstrip": false,
       "single_word": false,
       "special": true
-    },
-    "32000": {
-      "content": "<pad>",
-      "lstrip": false,
-      "normalized": false,
-      "rstrip": false,
-      "single_word": false,
-      "special": true
     }
   },
   "bos_token": "<s>",
@@ -42,7 +34,6 @@
   "extra_special_tokens": {},
   "legacy": true,
   "model_max_length": 2048,
-  "pad_token": "<pad>",
   "sp_model_kwargs": {},
   "tokenizer_class": "LlamaTokenizer",
   "unk_token": "<unk>",

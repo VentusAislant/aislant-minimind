@@ -48,7 +48,7 @@ if __name__ == "__main__":
     从项目根目录运行：
 
     python -m aislant_minimind.simple_train.train_pretrain_single \
-        --tokenizer_path model_weights/tokenizers/llama \
+        --tokenizer_path model_weights/tokenizers/Llama-2-7b-hf \
         --data_path data/pretrain_t2t_mini.jsonl \
         --output_dir outputs/simple_pretrain_single
     """
