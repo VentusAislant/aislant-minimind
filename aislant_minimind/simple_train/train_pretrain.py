@@ -41,9 +41,9 @@ def parse_args():
     parser.add_argument("--use_moe", action="store_true")
 
     parser.add_argument("--epochs", type=int, default=2)
-    parser.add_argument("--batch_size", type=int, default=64, help="每张卡的 batch size")
+    parser.add_argument("--batch_size", type=int, default=32, help="每张卡的 batch size")
     parser.add_argument("--learning_rate", type=float, default=5e-4)
-    parser.add_argument("--accumulation_steps", type=int, default=4)
+    parser.add_argument("--accumulation_steps", type=int, default=8)
     parser.add_argument("--grad_clip", type=float, default=1.0)
     parser.add_argument("--dtype", choices=["bfloat16", "float16", "float32"], default="bfloat16")
     parser.add_argument("--num_workers", type=int, default=8, help="每个进程的 worker 数")
