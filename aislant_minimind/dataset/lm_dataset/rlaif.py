@@ -127,10 +127,16 @@ if __name__ == "__main__":
         max_length=512,
     )
 
-    print("数据集大小：", len(dataset))
+    BLUE = "\033[34m"
+    GREEN = "\033[32m"
+    RED_BOLD = "\033[1;31m"
+    RESET = "\033[0m"
+
+    print(f"{RED_BOLD}数据集大小：{len(dataset)}{RESET}")
+    print("蓝色 = 提交给策略模型的 prompt；绿色 = 在线生成的 answer")
     for sample_index in range(2):
         sample = dataset[sample_index]
         token_count = len(tokenizer(sample["prompt"], add_special_tokens=False).input_ids)
-        print(f"\n===== 样本 {sample_index}（prompt tokens: {token_count}）=====")
-        print(sample["prompt"])
-        print("answer:", repr(sample["answer"]))
+        print(f"\n{RED_BOLD}===== 样本 {sample_index}（prompt tokens: {token_count}）====={RESET}")
+        print(f"prompt:\n{BLUE}{sample['prompt']}{RESET}")
+        print(f"answer: {GREEN}{sample['answer']!r}{RESET}")

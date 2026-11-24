@@ -100,10 +100,20 @@ if __name__ == "__main__":
         max_length=512,
     )
 
-    print("数据集大小：", len(dataset))
+    BLUE = "\033[34m"
+    GREEN = "\033[32m"
+    YELLOW = "\033[33m"
+    RED_BOLD = "\033[1;31m"
+    RESET = "\033[0m"
+
+    print(f"{RED_BOLD}数据集大小：{len(dataset)}{RESET}")
+    print("蓝色 = 对话消息；黄色 = 可用工具；绿色 = 目标答案")
     for sample_index in range(2):
         sample = dataset[sample_index]
-        print(f"\n===== 样本 {sample_index} =====")
-        print("messages:", sample["messages"])
-        print("tools:", sample["tools"])
-        print("gt:", sample["gt"])
+        print(f"\n{RED_BOLD}===== 样本 {sample_index} ====={RESET}")
+        messages = json.dumps(sample["messages"], ensure_ascii=False, indent=2)
+        tools = json.dumps(sample["tools"], ensure_ascii=False, indent=2)
+        gt = json.dumps(sample["gt"], ensure_ascii=False, indent=2)
+        print(f"messages:\n{BLUE}{messages}{RESET}")
+        print(f"tools:\n{YELLOW}{tools}{RESET}")
+        print(f"gt:\n{GREEN}{gt}{RESET}")
