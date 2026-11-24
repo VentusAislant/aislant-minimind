@@ -1,4 +1,9 @@
 #!/usr/bin/env bash
+
+# 无论从哪个目录调用，都统一在项目根目录运行。
+PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+cd "${PROJECT_ROOT}"
+
 # 多卡: 默认使用所有可见的卡, 可以使用 CUDA_VISIBLE_DEVICES=xxx 来设置可见卡
 torchrun --nproc_per_node=gpu -m aislant_minimind.simple_train.train_pretrain \
     --tokenizer_path model_weights/tokenizers/Llama-2-7b-hf \

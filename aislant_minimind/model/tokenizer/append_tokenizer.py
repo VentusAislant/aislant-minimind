@@ -7,7 +7,13 @@ from pathlib import Path
 from tokenizers import AddedToken
 from transformers import AutoTokenizer
 
-from .exrtra_tokens import ADDITIONAL_TOKENS, BUFFER_TOKENS, CORE_SPECIAL_TOKENS, OTHER_SPECIAL_TOKENS
+from .chat_template import CHAT_TEMPLATE
+from .exrtra_tokens import (
+    ADDITIONAL_TOKENS,
+    BUFFER_TOKENS,
+    CORE_SPECIAL_TOKENS,
+    OTHER_SPECIAL_TOKENS,
+)
 
 
 def parse_args():
@@ -26,6 +32,12 @@ def parse_args():
     )
     parser.add_argument("--special_tokens", nargs="*", default=[], help="额外追加的 special token")
     parser.add_argument("--additional_tokens", nargs="*", default=[], help="额外追加的普通原子 token")
+    parser.add_argument(
+        "--model_max_length",
+        type=int,
+        default=32768,
+        help=f"tokenizer 最大序列长度，本项目模型计算 RoPE 的最大位置范围为 32768",
+    )
     return parser.parse_args()
 
 
@@ -107,6 +119,7 @@ def rename_core_tokens(tokenizer, output_dir):
 def append_tokenizer(
         base_tokenizer_path,
         output_dir,
+        model_max_length,
         special_tokens=None,
         additional_tokens=None,
 ):
@@ -146,6 +159,8 @@ def append_tokenizer(
     if tokenizer.pad_token is None:
         tokenizer.add_special_tokens({"pad_token": CORE_SPECIAL_TOKENS["pad_token"]})
 
+    tokenizer.model_max_length = model_max_length
+    tokenizer.chat_template = CHAT_TEMPLATE
     tokenizer.save_pretrained(output_dir)
 
     print(f"Base tokenizer: {base_tokenizer_path}")
@@ -175,6 +190,7 @@ if __name__ == "__main__":
     append_tokenizer(
         base_tokenizer_path=args.base_tokenizer_path,
         output_dir=args.output_dir,
+        model_max_length=args.model_max_length,
         special_tokens=args.special_tokens,
         additional_tokens=args.additional_tokens,
     )
