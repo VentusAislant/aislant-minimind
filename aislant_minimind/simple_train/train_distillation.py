@@ -1,8 +1,9 @@
 import os
 import sys
+from pathlib import Path
 
-__package__ = "elegant_train"
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+__package__ = "aislant_minimind.simple_train"
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
 
 import datasets  # noqa: F401  # Windows pyarrow/torch DLL conflict workaround (issue #771)
 import argparse
@@ -15,9 +16,10 @@ from contextlib import nullcontext
 from torch import optim
 from torch.nn.parallel import DistributedDataParallel
 from torch.utils.data import DataLoader, DistributedSampler
-from model.model_minimind import MiniMindConfig
-from dataset.lm_dataset import SFTCollator, SFTDataset
-from elegant_train.trainer_utils import get_lr, Logger, is_main_process, lm_checkpoint, init_distributed_mode, setup_seed, init_model, SkipBatchSampler
+from transformers import AutoTokenizer
+from ..model.modeling_minimind_llama import MiniMindLlamaForCausalLM
+from ..dataset.lm_dataset import SFTCollator, SFTDataset
+from .utils import get_lr, Logger, is_main_process, init_distributed_mode, setup_seed, SkipBatchSampler
 
 warnings.filterwarnings('ignore')
 
@@ -121,17 +123,14 @@ def train_epoch(epoch, loader, iters, teacher_model, lm_config_student, start_st
                     "epoch_time": eta_min
                 })
 
-        if (step % args.save_interval == 0 or step == iters) and is_main_process():
+        if step == iters and is_main_process():
             model.eval()
-            moe_suffix = '_moe' if lm_config_student.use_moe else ''
-            ckp = f'{args.save_dir}/{args.save_weight}_{lm_config_student.hidden_size}{moe_suffix}.pth'
             raw_model = model.module if isinstance(model, DistributedDataParallel) else model
             raw_model = getattr(raw_model, '_orig_mod', raw_model)
-            state_dict = raw_model.state_dict()
-            torch.save({k: v.half().cpu() for k, v in state_dict.items()}, ckp)
-            lm_checkpoint(lm_config_student, weight=args.save_weight, model=model, optimizer=optimizer, scaler=scaler, epoch=epoch, step=step, wandb=wandb, save_dir='../model_weights')
+            args.output_dir.mkdir(parents=True, exist_ok=True)
+            raw_model.save_pretrained(args.output_dir, safe_serialization=True)
+            tokenizer.save_pretrained(args.output_dir)
             model.train()
-            del state_dict
 
         del input_ids, labels, loss_mask, res, student_logits, ce_loss, distill_loss, loss
 
@@ -139,12 +138,12 @@ def train_epoch(epoch, loader, iters, teacher_model, lm_config_student, start_st
 if __name__ == "__main__":
     # 模拟用moe模型蒸馏dense模型，也可以用更大teacher_hidden_size模型蒸馏更小student_hidden_size的
     parser = argparse.ArgumentParser(description="MiniMind Knowledge Distillation")
-    parser.add_argument("--save_dir", type=str, default="../out", help="模型保存目录")
-    parser.add_argument('--save_weight', default='full_dist', type=str, help="保存权重的前缀名")
+    parser.add_argument("--student_model_path", type=str, required=True, help="学生模型 Hugging Face 目录")
+    parser.add_argument("--teacher_model_path", type=str, required=True, help="教师模型 Hugging Face 目录")
+    parser.add_argument("--output_dir", type=Path, default=Path("outputs/simple_distillation"))
     parser.add_argument("--epochs", type=int, default=6, help="训练轮数")
     parser.add_argument("--batch_size", type=int, default=32, help="batch size")
     parser.add_argument("--learning_rate", type=float, default=5e-6, help="初始学习率")
-    parser.add_argument("--device", type=str, default="cuda:0" if torch.cuda.is_available() else "cpu", help="训练设备")
     parser.add_argument("--dtype", type=str, default="bfloat16", help="混合精度类型")
     parser.add_argument("--num_workers", type=int, default=8, help="数据加载线程数")
     parser.add_argument("--accumulation_steps", type=int, default=1, help="梯度累积步数")
@@ -152,16 +151,7 @@ if __name__ == "__main__":
     parser.add_argument("--log_interval", type=int, default=100, help="日志打印间隔")
     parser.add_argument("--save_interval", type=int, default=100, help="模型保存间隔")
     parser.add_argument("--max_seq_len", type=int, default=340, help="训练的最大截断长度（中文1token≈1.5~1.7字符）")
-    parser.add_argument("--data_path", type=str, default="../dataset/sft_t2t_mini.jsonl", help="训练数据路径")
-    parser.add_argument('--student_hidden_size', default=768, type=int, help="学生模型隐藏层维度")
-    parser.add_argument('--student_num_layers', default=8, type=int, help="学生模型隐藏层数量")
-    parser.add_argument('--teacher_hidden_size', default=768, type=int, help="教师模型隐藏层维度")
-    parser.add_argument('--teacher_num_layers', default=8, type=int, help="教师模型隐藏层数量")
-    parser.add_argument('--student_use_moe', default=0, type=int, choices=[0, 1], help="学生模型是否使用MoE（0=否，1=是）")
-    parser.add_argument('--teacher_use_moe', default=1, type=int, choices=[0, 1], help="教师模型是否使用MoE（0=否，1=是）")
-    parser.add_argument('--from_student_weight', default='full_sft', type=str, help="学生模型基于哪个权重")
-    parser.add_argument('--from_teacher_weight', default='full_sft', type=str, help="教师模型基于哪个权重")
-    parser.add_argument('--from_resume', default=0, type=int, choices=[0, 1], help="是否自动检测&续训（0=否，1=是）")
+    parser.add_argument("--data_path", type=str, required=True, help="训练数据路径")
     parser.add_argument('--alpha', default=0.5, type=float, help="CE损失权重，总损失=alpha*CE+(1-alpha)*KL")
     parser.add_argument('--temperature', default=1.5, type=float, help="蒸馏温度（推荐范围1.0-2.0）")
     parser.add_argument("--use_wandb", action="store_true", help="是否使用wandb")
@@ -171,14 +161,11 @@ if __name__ == "__main__":
 
     # ========== 1. 初始化环境和随机种子 ==========
     local_rank = init_distributed_mode()
-    if dist.is_initialized(): args.device = f"cuda:{local_rank}"
+    args.device = f"cuda:{local_rank}" if torch.cuda.is_available() and dist.is_initialized() else ("cuda" if torch.cuda.is_available() else "cpu")
     setup_seed(42 + (dist.get_rank() if dist.is_initialized() else 0))
     
     # ========== 2. 配置目录、模型参数、检查ckp ==========
-    os.makedirs(args.save_dir, exist_ok=True)
-    lm_config_student = MiniMindConfig(hidden_size=args.student_hidden_size, num_hidden_layers=args.student_num_layers, use_moe=bool(args.student_use_moe))
-    lm_config_teacher = MiniMindConfig(hidden_size=args.teacher_hidden_size, num_hidden_layers=args.teacher_num_layers, use_moe=bool(args.teacher_use_moe))
-    ckp_data = lm_checkpoint(lm_config_student, weight=args.save_weight, save_dir='../model_weights') if args.from_resume==1 else None
+    ckp_data = None
     
     # ========== 3. 设置混合精度 ==========
     device_type = "cuda" if "cuda" in args.device else "cpu"
@@ -188,16 +175,16 @@ if __name__ == "__main__":
     # ========== 4. 配wandb ==========
     wandb = None
     if args.use_wandb and is_main_process():
-        import swanlab as wandb
-        wandb_id = ckp_data.get('wandb_id') if ckp_data else None
-        resume = 'must' if wandb_id else None
-        wandb_run_name = f"MiniMind-Distill-S{args.student_hidden_size}T{args.teacher_hidden_size}-Epoch-{args.epochs}-BS-{args.batch_size}-LR-{args.learning_rate}"
-        wandb.init(project=args.wandb_project, name=wandb_run_name, id=wandb_id, resume=resume)
+        import wandb
+        wandb_run_name = f"distillation-{args.epochs}epoch-{args.batch_size}batch"
+        wandb.init(project=args.wandb_project, name=wandb_run_name, mode="offline")
     
     # ========== 5. 定义学生和教师模型 ==========
-    model, tokenizer = init_model(lm_config_student, args.from_student_weight, device=args.device)
+    tokenizer = AutoTokenizer.from_pretrained(args.student_model_path)
+    model = MiniMindLlamaForCausalLM.from_pretrained(args.student_model_path).to(args.device)
+    lm_config_student = model.config
     Logger(f'学生模型总参数量：{sum(p.numel() for p in model.parameters()) / 1e6:.3f} M')
-    teacher_model, _ = init_model(lm_config_teacher, args.from_teacher_weight, device=args.device)
+    teacher_model = MiniMindLlamaForCausalLM.from_pretrained(args.teacher_model_path).to(args.device)
     teacher_model.eval()
     teacher_model.requires_grad_(False)
     Logger(f'教师模型总参数量：{sum(p.numel() for p in teacher_model.parameters()) / 1e6:.3f} M')

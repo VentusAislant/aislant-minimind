@@ -1,8 +1,9 @@
 import os
 import sys
+from pathlib import Path
 
-__package__ = "elegant_train"
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+__package__ = "aislant_minimind.simple_train"
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
 
 import datasets  # noqa: F401  # Windows pyarrow/torch DLL conflict workaround (issue #771)
 import re
@@ -21,10 +22,10 @@ from torch.nn.parallel import DistributedDataParallel
 from torch.utils.data import DataLoader, DistributedSampler
 from torch.optim.lr_scheduler import CosineAnnealingLR
 from transformers import AutoTokenizer
-from model.model_minimind import MiniMindConfig, MiniMindForCausalLM
-from dataset.lm_dataset import AgentRLDataset
-from elegant_train.trainer_utils import Logger, is_main_process, lm_checkpoint, init_distributed_mode, setup_seed, SkipBatchSampler, init_model, LMForRewardModel, safe_math_eval
-from elegant_train.rollout_engine import create_rollout_engine, compute_per_token_logps
+from ..model.modeling_minimind_llama import MiniMindLlamaConfig as MiniMindConfig, MiniMindLlamaForCausalLM as MiniMindForCausalLM
+from ..dataset.lm_dataset import AgentRLDataset
+from .utils import Logger, is_main_process, init_distributed_mode, setup_seed, SkipBatchSampler, LMForRewardModel, safe_math_eval
+from .rollout_engine import create_rollout_engine, compute_per_token_logps
 
 warnings.filterwarnings('ignore')
 
@@ -348,18 +349,14 @@ def rl_train_epoch(epoch, loader, iters, rollout_engine, ref_model, reward_model
             if wandb and is_main_process():
                 wandb.log({"reward":ar,"kl_ref":kl,"group_reward_std":gs,"advantages_std":ast,"policy_loss":pl,"avg_response_len":al,"advantages_mean":am,"learning_rate":lr})
 
-        if (step % args.save_interval == 0 or step == iters) and is_main_process():
+        if step == iters and is_main_process():
             model.eval()
-            moe_suffix = '_moe' if lm_config.use_moe else ''
-            ckp = f'{args.save_dir}/{args.save_weight}_{lm_config.hidden_size}{moe_suffix}.pth'
             raw_model = model.module if isinstance(model, DistributedDataParallel) else model
             raw_model = getattr(raw_model, '_orig_mod', raw_model)
-            state_dict = raw_model.state_dict()
-            torch.save({k: v.half().cpu() for k, v in state_dict.items()}, ckp)
-            lm_checkpoint(lm_config, weight=args.save_weight, model=model, optimizer=optimizer,
-                         epoch=epoch, step=step, wandb=wandb, save_dir='../model_weights', scheduler=scheduler)
+            args.output_dir.mkdir(parents=True, exist_ok=True)
+            raw_model.save_pretrained(args.output_dir, safe_serialization=True)
+            tokenizer.save_pretrained(args.output_dir)
             model.train()
-            del state_dict
 
         if step % args.save_interval == 0 or step == iters: rollout_engine.update_policy(model)
 
@@ -369,39 +366,33 @@ def rl_train_epoch(epoch, loader, iters, rollout_engine, ref_model, reward_model
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="MiniMind Agent RL")
-    parser.add_argument("--save_dir", type=str, default="../out", help="模型保存目录")
-    parser.add_argument('--save_weight', default='agent', type=str, help="保存权重名称")
+    parser.add_argument("--model_path", type=str, required=True, help="SFT 模型 Hugging Face 目录")
+    parser.add_argument("--output_dir", type=Path, default=Path("outputs/simple_agent"))
     parser.add_argument("--epochs", type=int, default=1, help="训练轮数")
     parser.add_argument("--batch_size", type=int, default=2, help="批次大小")
     parser.add_argument("--learning_rate", type=float, default=3e-7, help="学习率")
-    parser.add_argument("--device", type=str, default="cuda:0" if torch.cuda.is_available() else "cpu", help="训练设备")
     parser.add_argument("--dtype", type=str, default="bfloat16", help="数据类型 bfloat16/float16")
     parser.add_argument("--num_workers", type=int, default=8, help="数据加载线程数")
     parser.add_argument("--accumulation_steps", type=int, default=1, help="梯度累积步数")
     parser.add_argument("--grad_clip", type=float, default=1.0, help="梯度裁剪阈值")
     parser.add_argument("--log_interval", type=int, default=1, help="日志打印间隔")
     parser.add_argument("--save_interval", type=int, default=10, help="模型保存间隔")
-    parser.add_argument('--hidden_size', default=768, type=int, help="模型隐藏层维度")
-    parser.add_argument('--num_hidden_layers', default=8, type=int, help="模型层数")
-    parser.add_argument('--use_moe', default=0, type=int, choices=[0, 1], help="是否使用MoE")
     parser.add_argument('--max_seq_len', default=1024, type=int, help="最大序列长度")
     parser.add_argument("--max_gen_len", type=int, default=768, help="单次最大生成长度")
     parser.add_argument("--max_total_len", type=int, default=2500, help="训练侧最终总长度上界")
-    parser.add_argument("--data_path", type=str, default="../dataset/agent_rl.jsonl", help="训练数据路径")
+    parser.add_argument("--data_path", type=str, required=True, help="Agent RL 数据路径")
     parser.add_argument("--num_generations", type=int, default=4, help="每个prompt生成数量")
     parser.add_argument("--beta", type=float, default=0.1, help="KL散度惩罚系数")
     parser.add_argument("--loss_type", type=str, default="cispo", choices=["grpo", "cispo"], help="loss类型")
     parser.add_argument("--epsilon", type=float, default=0.2, help="GRPO的PPO clip epsilon")
     parser.add_argument("--epsilon_high", type=float, default=5.0, help="epsilon上界")
-    parser.add_argument('--from_weight', default='full_sft', type=str, help="加载预训练权重名称")
-    parser.add_argument('--from_resume', default=0, type=int, choices=[0, 1], help="是否从checkpoint恢复")
     parser.add_argument("--use_wandb", action="store_true", help="是否使用wandb记录")
     parser.add_argument("--wandb_project", type=str, default="MiniMind-Agent-RL", help="wandb项目名称")
     parser.add_argument("--use_compile", default=0, type=int, choices=[0, 1], help="是否使用torch.compile")
     parser.add_argument("--debug_mode", action="store_true", help="调试模式")
     parser.add_argument("--debug_interval", type=int, default=20, help="调试日志间隔")
     parser.add_argument("--thinking_ratio", type=float, default=0.1, help="按概率开启thinking（0.0~1.0）")
-    parser.add_argument("--reward_model_path", type=str, default="../../internlm2-1_8b-reward", help="Reward模型路径")
+    parser.add_argument("--reward_model_path", type=str, required=True, help="Reward 模型目录")
     parser.add_argument("--rollout_engine", type=str, default="torch", choices=["torch", "sglang"], help="rollout引擎类型")
     parser.add_argument("--sglang_base_url", type=str, default="http://localhost:8998", help="SGLang服务器URL")
     parser.add_argument("--sglang_model_path", type=str, default="../model", help="SGLang tokenizer路径")
@@ -409,13 +400,10 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     local_rank = init_distributed_mode()
-    if dist.is_initialized(): args.device = f"cuda:{local_rank}"
+    args.device = f"cuda:{local_rank}" if torch.cuda.is_available() and dist.is_initialized() else ("cuda" if torch.cuda.is_available() else "cpu")
     setup_seed(42 + (dist.get_rank() if dist.is_initialized() else 0))
 
-    os.makedirs(args.save_dir, exist_ok=True)
-    lm_config = MiniMindConfig(hidden_size=args.hidden_size, num_hidden_layers=args.num_hidden_layers,
-                               max_seq_len=args.max_seq_len + args.max_gen_len, use_moe=bool(args.use_moe))
-    ckp_data = lm_checkpoint(lm_config, weight=args.save_weight, save_dir='../model_weights') if args.from_resume == 1 else None
+    ckp_data = None
 
     device_type = "cuda" if "cuda" in args.device else "cpu"
     dtype = torch.bfloat16 if args.dtype == "bfloat16" else torch.float16
@@ -423,14 +411,14 @@ if __name__ == "__main__":
 
     wandb = None
     if args.use_wandb and is_main_process():
-        import swanlab as wandb
-        wandb_id = ckp_data.get('wandb_id') if ckp_data else None
-        resume = 'must' if wandb_id else None
-        wandb.init(project=args.wandb_project, name=f"Agent-RL-E{args.epochs}-B{args.batch_size}-LR{args.learning_rate}", id=wandb_id, resume=resume)
+        import wandb
+        wandb.init(project=args.wandb_project, name=f"agent-{args.loss_type}", mode="offline")
 
-    model, tokenizer = init_model(lm_config, args.from_weight, device=args.device)
+    model = MiniMindForCausalLM.from_pretrained(args.model_path).to(args.device)
+    tokenizer = AutoTokenizer.from_pretrained(args.model_path)
+    lm_config = model.config
 
-    ref_model, _ = init_model(lm_config, args.from_weight, device=args.device)
+    ref_model = MiniMindForCausalLM.from_pretrained(args.model_path).to(args.device)
     ref_model = ref_model.eval().requires_grad_(False)
 
     reward_model = LMForRewardModel(args.reward_model_path, device=args.device, dtype=torch.float16)

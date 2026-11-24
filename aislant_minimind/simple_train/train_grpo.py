@@ -1,8 +1,9 @@
 import os
 import sys
+from pathlib import Path
 
-__package__ = "elegant_train"
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+__package__ = "aislant_minimind.simple_train"
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
 
 import datasets  # noqa: F401  # Windows pyarrow/torch DLL conflict workaround (issue #771)
 import argparse
@@ -20,10 +21,10 @@ from torch.nn.parallel import DistributedDataParallel
 from torch.utils.data import DataLoader, DistributedSampler
 from torch.optim.lr_scheduler import CosineAnnealingLR
 from transformers import AutoModel
-from model.model_minimind import MiniMindConfig, MiniMindForCausalLM
-from dataset.lm_dataset import RLAIFDataset
-from elegant_train.trainer_utils import Logger, is_main_process, lm_checkpoint, init_distributed_mode, setup_seed, SkipBatchSampler, init_model, LMForRewardModel
-from elegant_train.rollout_engine import create_rollout_engine
+from ..model.modeling_minimind_llama import MiniMindLlamaConfig as MiniMindConfig, MiniMindLlamaForCausalLM as MiniMindForCausalLM
+from ..dataset.lm_dataset import RLAIFDataset
+from .utils import Logger, is_main_process, init_distributed_mode, setup_seed, SkipBatchSampler, LMForRewardModel
+from .rollout_engine import create_rollout_engine
 
 warnings.filterwarnings('ignore')
 
@@ -177,18 +178,14 @@ def grpo_train_epoch(epoch, loader, iters, rollout_engine, ref_model, reward_mod
                     "learning_rate": current_lr
                 })
 
-        if (step % args.save_interval == 0 or step == iters) and is_main_process():
+        if step == iters and is_main_process():
             model.eval()
-            moe_suffix = '_moe' if lm_config.use_moe else ''
-            ckp = f'{args.save_dir}/{args.save_weight}_{lm_config.hidden_size}{moe_suffix}.pth'
             raw_model = model.module if isinstance(model, DistributedDataParallel) else model
             raw_model = getattr(raw_model, '_orig_mod', raw_model)
-            state_dict = raw_model.state_dict()
-            torch.save({k: v.half().cpu() for k, v in state_dict.items()}, ckp)
-            lm_checkpoint(lm_config, weight=args.save_weight, model=model, optimizer=optimizer, 
-                         epoch=epoch, step=step, wandb=wandb, save_dir='../model_weights', scheduler=scheduler)
+            args.output_dir.mkdir(parents=True, exist_ok=True)
+            raw_model.save_pretrained(args.output_dir, safe_serialization=True)
+            tokenizer.save_pretrained(args.output_dir)
             model.train()
-            del state_dict
 
         if step % args.save_interval == 0 or step == iters: rollout_engine.update_policy(model)
 
@@ -198,32 +195,26 @@ def grpo_train_epoch(epoch, loader, iters, rollout_engine, ref_model, reward_mod
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="MiniMind GRPO (Group Relative Policy Optimization)")
-    parser.add_argument("--save_dir", type=str, default="../out", help="模型保存目录")
-    parser.add_argument('--save_weight', default='grpo', type=str, help="保存权重的前缀名")
+    parser.add_argument("--model_path", type=str, required=True, help="SFT 模型 Hugging Face 目录")
+    parser.add_argument("--output_dir", type=Path, default=Path("outputs/simple_grpo"))
     parser.add_argument("--epochs", type=int, default=1, help="训练轮数")
     parser.add_argument("--batch_size", type=int, default=2, help="batch size")
     parser.add_argument("--learning_rate", type=float, default=3e-7, help="初始学习率")
-    parser.add_argument("--device", type=str, default="cuda:0" if torch.cuda.is_available() else "cpu", help="训练设备")
     parser.add_argument("--dtype", type=str, default="bfloat16", help="混合精度类型")
     parser.add_argument("--num_workers", type=int, default=8, help="数据加载线程数")
     parser.add_argument("--accumulation_steps", type=int, default=1, help="梯度累积步数")
     parser.add_argument("--grad_clip", type=float, default=1.0, help="梯度裁剪阈值")
     parser.add_argument("--log_interval", type=int, default=1, help="日志打印间隔")
     parser.add_argument("--save_interval", type=int, default=10, help="模型保存间隔")
-    parser.add_argument('--hidden_size', default=768, type=int, help="隐藏层维度")
-    parser.add_argument('--num_hidden_layers', default=8, type=int, help="隐藏层数量")
-    parser.add_argument('--use_moe', default=0, type=int, choices=[0, 1], help="是否使用MoE架构（0=否，1=是）")
     parser.add_argument('--max_seq_len', default=768, type=int, help="Prompt最大长度")
     parser.add_argument("--max_gen_len", type=int, default=1024, help="生成的最大长度")
-    parser.add_argument("--data_path", type=str, default="../dataset/rlaif.jsonl", help="RLAIF数据路径")
+    parser.add_argument("--data_path", type=str, required=True, help="RLAIF 数据路径")
     parser.add_argument("--num_generations", type=int, default=6, help="每个prompt生成的样本数")
     parser.add_argument("--beta", type=float, default=0.1, help="KL惩罚系数")
     parser.add_argument("--loss_type", type=str, default="cispo", choices=["grpo", "cispo"], help="loss类型")
     parser.add_argument("--epsilon", type=float, default=0.2, help="GRPO的PPO clip epsilon")
     parser.add_argument("--epsilon_high", type=float, default=5.0, help="epsilon上界")
-    parser.add_argument('--from_weight', default='full_sft', type=str, help="基于哪个权重训练")
-    parser.add_argument("--reward_model_path", type=str, default="../../internlm2-1_8b-reward", help="Reward模型路径")
-    parser.add_argument('--from_resume', default=0, type=int, choices=[0, 1], help="是否自动检测&续训（0=否，1=是）")
+    parser.add_argument("--reward_model_path", type=str, required=True, help="Reward 模型目录")
     parser.add_argument("--use_wandb", action="store_true", help="是否使用wandb")
     parser.add_argument("--wandb_project", type=str, default="MiniMind-GRPO", help="wandb项目名")
     parser.add_argument("--use_compile", default=0, type=int, choices=[0, 1], help="是否使用torch.compile加速（0=否，1=是）")
@@ -238,14 +229,11 @@ if __name__ == "__main__":
 
     # ========== 1. 初始化环境和随机种子 ==========
     local_rank = init_distributed_mode()
-    if dist.is_initialized(): args.device = f"cuda:{local_rank}"
+    args.device = f"cuda:{local_rank}" if torch.cuda.is_available() and dist.is_initialized() else ("cuda" if torch.cuda.is_available() else "cpu")
     setup_seed(42 + (dist.get_rank() if dist.is_initialized() else 0))
     
     # ========== 2. 配置目录、模型参数、检查ckp ==========
-    os.makedirs(args.save_dir, exist_ok=True)
-    lm_config = MiniMindConfig(hidden_size=args.hidden_size, num_hidden_layers=args.num_hidden_layers,
-                               max_seq_len=args.max_seq_len + args.max_gen_len, use_moe=bool(args.use_moe))
-    ckp_data = lm_checkpoint(lm_config, weight=args.save_weight, save_dir='../model_weights') if args.from_resume==1 else None
+    ckp_data = None
     
     # ========== 3. 设置混合精度 ==========
     device_type = "cuda" if "cuda" in args.device else "cpu"
@@ -255,18 +243,17 @@ if __name__ == "__main__":
     # ========== 4. 配wandb ==========
     wandb = None
     if args.use_wandb and is_main_process():
-        import swanlab as wandb
-        wandb_id = ckp_data.get('wandb_id') if ckp_data else None
-        resume = 'must' if wandb_id else None
+        import wandb
         wandb_run_name = f"MiniMind-GRPO-Epoch-{args.epochs}-BS-{args.batch_size}-LR-{args.learning_rate}"
-        wandb.init(project=args.wandb_project, name=wandb_run_name, id=wandb_id, resume=resume)
+        wandb.init(project=args.wandb_project, name=wandb_run_name, mode="offline")
     
     # ========== 5. 初始化模型和数据 ==========
-    base_weight = args.from_weight
     # Policy模型
-    model, tokenizer = init_model(lm_config, base_weight, device=args.device)
+    model = MiniMindForCausalLM.from_pretrained(args.model_path).to(args.device)
+    tokenizer = AutoTokenizer.from_pretrained(args.model_path)
+    lm_config = model.config
     # Reference模型
-    ref_model, _ = init_model(lm_config, base_weight, device=args.device)
+    ref_model = MiniMindForCausalLM.from_pretrained(args.model_path).to(args.device)
     ref_model = ref_model.eval().requires_grad_(False)
     # Reward模型
     reward_model = LMForRewardModel(args.reward_model_path, device=args.device, dtype=torch.float16)

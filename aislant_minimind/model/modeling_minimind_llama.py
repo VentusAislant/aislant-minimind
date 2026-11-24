@@ -627,7 +627,7 @@ class MiniMindLlamaForCausalLM(PreTrainedModel, GenerationMixin):
                     torch.softmax(logits, dim=-1), num_samples=1
                 )
             else:
-                torch.argmax(logits, dim=-1, keepdim=True)
+                next_token = torch.argmax(logits, dim=-1, keepdim=True)
 
             if eos_token_id is not None:
                 next_token = torch.where(

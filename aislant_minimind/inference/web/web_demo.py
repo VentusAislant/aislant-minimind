@@ -239,11 +239,6 @@ def switch_model():
         torch.cuda.empty_cache()
 
 
-def switch_inference_mode():
-    """补全和对话使用不同的输入格式，切换时不保留历史。"""
-    clear_chat()
-
-
 with st.sidebar:
     st.markdown("## Aislant Minimind")
     st.caption("本地智能助手")
@@ -273,13 +268,13 @@ with st.sidebar:
             )
         else:
             model_path = selected_model
-        inference_mode = st.selectbox(
-            "推理模式",
-            [COMPLETION_MODE, CHAT_MODE],
-            on_change=switch_inference_mode,
-            key="inference_mode",
-            help="Pretrain 模型使用文本补全，SFT 模型使用对话模板。",
+        # Pretrain 模型做文本补全；后续 SFT、DPO、RL 等模型都使用 Chat 模板。
+        inference_mode = (
+            COMPLETION_MODE
+            if "pretrain" in str(model_path).lower()
+            else CHAT_MODE
         )
+        st.caption(f"推理模式：{inference_mode}")
         max_new_tokens = st.slider("最大生成长度", 64, 4096, 512, step=64)
         temperature = st.slider("Temperature", 0.1, 1.5, 0.8, step=0.05)
         top_p = st.slider("Top P", 0.1, 1.0, 0.9, step=0.05)
@@ -374,6 +369,16 @@ if prompt:
         skip_prompt=True,
         skip_special_tokens=True,
     )
+    # SFT 的每轮 assistant 回复以 <|im_end|> 结束；补全模型才使用普通 EOS。
+    # 如果 Chat 模式仍使用 eos_token_id，模型生成 <|im_end|> 后不会停止，
+    # 后续无监督内容会继续生成并污染下一轮对话历史。
+    if inference_mode == CHAT_MODE:
+        stop_token_id = tokenizer.convert_tokens_to_ids("<|im_end|>")
+        if stop_token_id == tokenizer.unk_token_id:
+            raise ValueError("当前 tokenizer 缺少 Chat 模式所需的 <|im_end|> token")
+    else:
+        stop_token_id = tokenizer.eos_token_id
+
     generation_kwargs = {
         "input_ids": inputs.input_ids,
         "attention_mask": inputs.attention_mask,
@@ -382,7 +387,7 @@ if prompt:
         "temperature": temperature,
         "top_p": top_p,
         "pad_token_id": tokenizer.pad_token_id,
-        "eos_token_id": tokenizer.eos_token_id,
+        "eos_token_id": stop_token_id,
         "streamer": streamer,
     }
 
