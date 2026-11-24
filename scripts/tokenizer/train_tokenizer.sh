@@ -8,8 +8,7 @@ cd "${PROJECT_ROOT}"
 
 # 从语料训练全新的 Aislant MiniMind tokenizer。
 python -m aislant_minimind.model.tokenizer.train_tokenizer \
-    --data_path data/pretrain_t2t.jsonl data/sft_t2t_mini.jsonl \
+    --data_paths data/pretrain_t2t.jsonl data/sft_t2t_mini.jsonl \
     --output_dir model_weights/tokenizers/aislant_minimind \
     --vocab_size 6400 \
     "$@"
-

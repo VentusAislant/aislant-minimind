@@ -292,14 +292,14 @@ if __name__ == '__main__':
     从项目根目录运行：
 
     python -m aislant_minimind.model.tokenizer.train_tokenizer \
-        --data_path data/pretrain_t2t.jsonl data/sft_t2t_mini.jsonl \
+        --data_paths data/pretrain_t2t.jsonl data/sft_t2t_mini.jsonl \
         --vocab_size 6400
     """
     args = parse_args()
 
     # 1. 训练 tokenizer
     train_tokenizer(
-        data_paths=args.data_path,
+        data_paths=args.data_paths,
         tokenizer_dir=args.output_dir,
         vocab_size=args.vocab_size,
         max_lines=args.max_lines,
