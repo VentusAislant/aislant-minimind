@@ -9,7 +9,8 @@ Tokenizer (分词器)
             - 算法: BPE（从 256 个字节出发，反复合并出现最频繁的相邻 token 对，直到词表达到目标大小）
             - 预分词: ByteLevel，把文本先转成 UTF-8 字节，任何字符都能表示，不会出现 OOV
         3. 定义特殊 token
-            - 控制 token: <|im_start|>、<|im_end|>、<|endoftext|> 等，用来标记对话边界、补齐、结束
+            - 核心 token: <|begin_of_text|>、<|end_of_text|>、<|text_pad|>
+            - 控制 token: <|im_start|>、<|im_end|> 等，用来标记对话边界
             - 附加 token: <think>、<tool_call> 等，要在解码时保留，所以标记为非 special
             - 预留 buffer token: 以后想加新 token 时不用改词表大小，也不用重训模型
             - 特殊 token 会放在词表最前面（ID 0 ~ N-1）
@@ -47,8 +48,11 @@ import json
 from pathlib import Path
 
 from tokenizers import decoders, models, pre_tokenizers, trainers, Tokenizer
+from tqdm.auto import tqdm
 
-from .exrtra_tokens import ADDITIONAL_TOKENS, ALL_TOKENS, SPECIAL_TOKENS
+from .exrtra_tokens import ALL_SPECIAL_TOKENS, ALL_TOKENS, CORE_SPECIAL_TOKENS, OTHER_SPECIAL_TOKENS
+
+DEFAULT_MAX_LINES = 1_000_000
 
 # Tokenizer 评估样例
 EVAL_MESSAGES = [
@@ -87,7 +91,12 @@ def parse_args():
         help="tokenizer 输出目录",
     )
     parser.add_argument("--vocab_size", type=int, default=6400, help="目标词表大小")
-    parser.add_argument("--max_lines", type=int, default=0, help="最多读取的有效文本数，0 表示全部")
+    parser.add_argument(
+        "--max_lines",
+        type=int,
+        default=DEFAULT_MAX_LINES,
+        help=f"最多读取的有效文本数，默认 {DEFAULT_MAX_LINES}，0 表示全部",
+    )
     parser.add_argument("--skip_eval", action="store_true", help="训练后跳过 tokenizer 评估")
     return parser.parse_args()
 
@@ -168,6 +177,16 @@ def train_tokenizer(
     if max_lines < 0:
         raise ValueError("max_lines 不能小于 0")
 
+    # 先流式统计有效序列数量。计数阶段没有预知总数，只显示不断增长的已处理数量；
+    # 得到准确数量后再交给 tokenizer，使其训练进度条能够显示正确的总进度。
+    sequence_count = sum(
+        1 for _ in tqdm(
+            get_texts(data_paths, max_lines),
+            desc="Counting sequences",
+            unit=" sequences",
+        )
+    )
+
     # 基于语料迭代器训练 BPE，不需要一次性把全部文本载入内存。
     trainer = trainers.BpeTrainer(
         vocab_size=vocab_size,
@@ -177,9 +196,13 @@ def train_tokenizer(
     )
 
     texts = get_texts(data_paths, max_lines)  # 得到文本生成器（边读边产出，不会一次性占满内存）
-    tokenizer.train_from_iterator(texts, trainer=trainer)  # 开始训练：反复合并最频繁的相邻 token 对
+    tokenizer.train_from_iterator(
+        texts,
+        trainer=trainer,
+        length=sequence_count,
+    )  # 开始训练：反复合并最频繁的相邻 token 对
     tokenizer.decoder = decoders.ByteLevel()  # 解码器：把字节字符还原成原始文本，要和预分词配套
-    tokenizer.add_special_tokens(SPECIAL_TOKENS)
+    tokenizer.add_special_tokens(ALL_SPECIAL_TOKENS)
 
     # 同时保存统一的 tokenizer.json 和兼容 BPE 的 vocab/merges 文件。
     tokenizer_dir.mkdir(parents=True, exist_ok=True)
@@ -189,7 +212,7 @@ def train_tokenizer(
     with open(tokenizer_json_path, 'r', encoding='utf-8') as f:
         tokenizer_data = json.load(f)
     for token_info in tokenizer_data.get('added_tokens', []):
-        if token_info['content'] not in SPECIAL_TOKENS:
+        if token_info['content'] not in ALL_SPECIAL_TOKENS:
             token_info['special'] = False
     with open(tokenizer_json_path, 'w', encoding='utf-8') as f:
         json.dump(tokenizer_data, f, ensure_ascii=False, indent=2)
@@ -204,7 +227,7 @@ def train_tokenizer(
             "normalized": False,
             "rstrip": False,
             "single_word": False,
-            "special": token in SPECIAL_TOKENS
+            "special": token in ALL_SPECIAL_TOKENS
         }
 
     config = {
@@ -212,16 +235,16 @@ def train_tokenizer(
         "add_eos_token": False,
         "add_prefix_space": False,
         "added_tokens_decoder": added_tokens_decoder,
-        "additional_special_tokens": [token for token in SPECIAL_TOKENS if token != "<|endoftext|>"],
-        "bos_token": "<|im_start|>",
+        "additional_special_tokens": OTHER_SPECIAL_TOKENS,
+        "bos_token": CORE_SPECIAL_TOKENS["bos_token"],
         "clean_up_tokenization_spaces": False,
-        "eos_token": "<|im_end|>",
+        "eos_token": CORE_SPECIAL_TOKENS["eos_token"],
         "legacy": True,
         "model_max_length": 131072,
-        "pad_token": "<|endoftext|>",
+        "pad_token": CORE_SPECIAL_TOKENS["pad_token"],
         "sp_model_kwargs": {},
         "spaces_between_special_tokens": False,
-        "unk_token": "<|endoftext|>",
+        "unk_token": None,
         "image_token": "<|image_pad|>",
         "audio_token": "<|audio_pad|>",
         "video_token": "<|video_pad|>",

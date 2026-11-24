@@ -1,9 +1,13 @@
 """Aislant MiniMind 需要的一些额外 token"""
 
 # 解码时可以由 skip_special_tokens=True 自动跳过的控制 token
-SPECIAL_TOKENS = [
-    "<|endoftext|>",           # 文档或完整文本结束标记
+CORE_SPECIAL_TOKENS = {
+    "bos_token": "<|begin_of_text|>",
+    "eos_token": "<|end_of_text|>",
+    "pad_token": "<|text_pad|>",
+}
 
+OTHER_SPECIAL_TOKENS = [
     "<|im_start|>",            # 一条对话消息的开始标记，后面通常跟 system/user/assistant 角色
     "<|im_end|>",              # 一条对话消息的结束标记
 
@@ -43,4 +47,5 @@ ADDITIONAL_TOKENS = [
 # 为未来扩展协议预留位置，避免后续改变模型 embedding 大小。
 BUFFER_TOKENS = [f"<|buffer{i}|>" for i in range(1, 10)]
 
-ALL_TOKENS = SPECIAL_TOKENS + ADDITIONAL_TOKENS + BUFFER_TOKENS
+ALL_SPECIAL_TOKENS = list(CORE_SPECIAL_TOKENS.values()) + OTHER_SPECIAL_TOKENS
+ALL_TOKENS = ALL_SPECIAL_TOKENS + ADDITIONAL_TOKENS + BUFFER_TOKENS
