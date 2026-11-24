@@ -4,6 +4,7 @@
 streamlit run aislant_minimind/inference/web/web_demo.py
 """
 
+import gc
 import sys
 from html import escape
 from pathlib import Path
@@ -19,6 +20,32 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from aislant_minimind.model.modeling_minimind_llama import MiniMindLlamaForCausalLM
+
+
+CUSTOM_MODEL_PATH = "自定义路径…"
+COMPLETION_MODE = "补全（Pretrain）"
+CHAT_MODE = "Chat（SFT）"
+
+
+def discover_models():
+    """自动发现项目内保存为 Hugging Face 格式的模型目录。"""
+    model_paths = []
+    for model_root in (PROJECT_ROOT / "outputs", PROJECT_ROOT / "model_weights" / "models"):
+        if not model_root.exists():
+            continue
+        for config_path in model_root.rglob("config.json"):
+            model_dir = config_path.parent
+            has_weights = (
+                (model_dir / "model.safetensors").is_file()
+                or (model_dir / "pytorch_model.bin").is_file()
+            )
+            has_tokenizer = (
+                (model_dir / "tokenizer.json").is_file()
+                or (model_dir / "tokenizer.model").is_file()
+            )
+            if has_weights and has_tokenizer:
+                model_paths.append(str(model_dir.relative_to(PROJECT_ROOT)))
+    return sorted(set(model_paths))
 
 
 st.set_page_config(
@@ -203,13 +230,56 @@ def clear_chat():
     st.session_state.messages = []
 
 
+def switch_model():
+    """切换模型时释放旧模型，并避免混用上一个模型的对话。"""
+    clear_chat()
+    load_model.clear()
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+
+def switch_inference_mode():
+    """补全和对话使用不同的输入格式，切换时不保留历史。"""
+    clear_chat()
+
+
 with st.sidebar:
     st.markdown("## Aislant Minimind")
     st.caption("本地智能助手")
     st.divider()
 
     with st.expander("⚙️ 模型与生成设置", expanded=True):
-        model_path = st.text_input("模型路径", value="outputs/simple_pretrain_single")
+        available_models = discover_models()
+        model_options = available_models + [CUSTOM_MODEL_PATH]
+        default_model = (
+            "outputs/simple_pretrain_single"
+            if "outputs/simple_pretrain_single" in available_models
+            else model_options[0]
+        )
+        selected_model = st.selectbox(
+            "选择模型",
+            model_options,
+            index=model_options.index(default_model),
+            on_change=switch_model,
+            key="selected_model",
+        )
+        if selected_model == CUSTOM_MODEL_PATH:
+            model_path = st.text_input(
+                "模型路径",
+                value="outputs/simple_pretrain_single",
+                on_change=switch_model,
+                key="custom_model_path",
+            )
+        else:
+            model_path = selected_model
+        inference_mode = st.selectbox(
+            "推理模式",
+            [COMPLETION_MODE, CHAT_MODE],
+            on_change=switch_inference_mode,
+            key="inference_mode",
+            help="Pretrain 模型使用文本补全，SFT 模型使用对话模板。",
+        )
         max_new_tokens = st.slider("最大生成长度", 64, 4096, 512, step=64)
         temperature = st.slider("Temperature", 0.1, 1.5, 0.8, step=0.05)
         top_p = st.slider("Top P", 0.1, 1.0, 0.9, step=0.05)
@@ -225,7 +295,7 @@ st.markdown(
     f"""
     <div class="chat-header">
         <div class="brand">Aislant Minimind</div>
-        <div class="model-status">{escape(Path(model_path).name)}</div>
+        <div class="model-status">{escape(Path(model_path).name)} · {escape(inference_mode)}</div>
     </div>
     """,
     unsafe_allow_html=True,
@@ -252,7 +322,8 @@ for message in st.session_state.messages:
                 st.markdown(message["thinking"])
         st.markdown(message["content"])
 
-prompt = st.chat_input("给 Aislant Minimind 发送消息")
+input_placeholder = "输入需要续写的文本" if inference_mode == COMPLETION_MODE else "给 Aislant Minimind 发送消息"
+prompt = st.chat_input(input_placeholder)
 if prompt:
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
@@ -264,16 +335,20 @@ if prompt:
         st.error(f"模型加载失败：{error}")
         st.stop()
 
-    history = [
-        {"role": message["role"], "content": message["content"]}
-        for message in st.session_state.messages
-    ]
-    input_text = tokenizer.apply_chat_template(
-        history,
-        tokenize=False,
-        add_generation_prompt=True,
-        open_thinking=show_thinking,
-    )
+    if inference_mode == CHAT_MODE:
+        history = [
+            {"role": message["role"], "content": message["content"]}
+            for message in st.session_state.messages
+        ]
+        input_text = tokenizer.apply_chat_template(
+            history,
+            tokenize=False,
+            add_generation_prompt=True,
+            open_thinking=show_thinking,
+        )
+    else:
+        # Pretrain 模型没有学习对话模板，直接对当前文本做续写。
+        input_text = prompt
     inputs = tokenizer(input_text, return_tensors="pt", truncation=True).to(device)
     streamer = TextIteratorStreamer(
         tokenizer,
@@ -299,10 +374,17 @@ if prompt:
         raw_response = ""
         for text in streamer:
             raw_response += text
-            _, visible_answer = split_response(raw_response)
+            visible_answer = (
+                split_response(raw_response)[1]
+                if inference_mode == CHAT_MODE
+                else raw_response
+            )
             placeholder.markdown(visible_answer or "思考中…")
 
-        thinking, answer = split_response(raw_response)
+        if inference_mode == CHAT_MODE:
+            thinking, answer = split_response(raw_response)
+        else:
+            thinking, answer = "", raw_response
         placeholder.markdown(answer)
         if thinking and show_thinking:
             with st.expander("思考过程", expanded=False):
