@@ -54,6 +54,7 @@ class Trainer(ABC):
 
         self.train_dataset = None  # 训练数据集
         self.train_sampler = None  # 数据集采样器
+        self.data_collator = None  # 将变长样本动态补齐并组成 batch
 
         self.global_step = 0  # 总步数
         self.steps_per_epoch = 0  # 每个 epoch 的步数
@@ -285,6 +286,7 @@ class Trainer(ABC):
             train_dataloader = DataLoader(
                 self.train_dataset,
                 batch_sampler=batch_sampler,
+                collate_fn=self.data_collator,
                 num_workers=self.data_args.num_workers,
                 pin_memory=self.device.type == "cuda",
             )

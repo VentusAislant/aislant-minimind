@@ -1,12 +1,34 @@
 import os
 import torch
 from torch.utils.data import Dataset
+from torch.nn.utils.rnn import pad_sequence
 
 import datasets
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"  # 关闭分词器自己的多线程
 
-__all__ = ["PretrainDataset"]
+__all__ = ["PretrainDataset", "PretrainCollator"]
+
+
+class PretrainCollator:
+    """将预训练样本动态补齐到当前 batch 的最长长度"""
+
+    def __init__(self, pad_token_id):
+        self.pad_token_id = pad_token_id
+
+    def __call__(self, batch):
+        input_ids, labels = zip(*batch)
+        input_ids = pad_sequence(
+            input_ids,
+            batch_first=True,
+            padding_value=self.pad_token_id,
+        )
+        labels = pad_sequence(
+            labels,
+            batch_first=True,
+            padding_value=-100,
+        )
+        return input_ids, labels
 
 
 class PretrainDataset(Dataset):
@@ -73,12 +95,9 @@ class PretrainDataset(Dataset):
 
         # 添加首尾特殊 token
         tokens = [self.tokenizer.bos_token_id] + tokens + [self.tokenizer.eos_token_id]
-        # 添加 pad token 方便组成 batch
-        input_ids = tokens + [self.tokenizer.pad_token_id] * (self.max_length - len(tokens))
-        input_ids = torch.tensor(input_ids, dtype=torch.long)
-        # 标签(Ground Truth) token 在 pad 位置不需要计算损失, -100 会被交叉熵损失忽略
+        # Dataset 只返回截断后的变长序列，padding 由 PretrainCollator 完成。
+        input_ids = torch.tensor(tokens, dtype=torch.long)
         labels = input_ids.clone()
-        labels[input_ids == self.tokenizer.pad_token_id] = -100
         return input_ids, labels
 
 
@@ -88,7 +107,7 @@ if __name__ == '__main__':
     from transformers import AutoTokenizer
 
     project_root = Path(__file__).resolve().parents[3]
-    tokenizer_path = project_root / "model_weights" / "tokenizers" / "llama"
+    tokenizer_path = project_root / "model_weights" / "tokenizers" / "aislant_minimind_llama"
     print(tokenizer_path)
     tokenizer = AutoTokenizer.from_pretrained(
         tokenizer_path,
@@ -100,12 +119,12 @@ if __name__ == '__main__':
     pretrain_dataset = PretrainDataset(data_path=str(dataset_path), tokenizer=tokenizer)
     print(len(pretrain_dataset))
     print(tokenizer.bos_token_id, tokenizer.eos_token_id, tokenizer.pad_token_id)  # 三个应互不相同
-    input_ids, labels = pretrain_dataset[0]
-    print(input_ids.shape, labels.shape)  # 都应是 (512,)
-    print((labels == -100).sum().item(), "个 pad 位置")
-    print(tokenizer.decode(input_ids[labels != -100]))  # 应该还原出原文，含首尾标记
+    samples = [pretrain_dataset[0], pretrain_dataset[1]]
+    for index, (input_ids, labels) in enumerate(samples):
+        print(f"样本 {index}：", input_ids.shape, labels.shape)
+        print(tokenizer.decode(input_ids, skip_special_tokens=False))
 
-    input_ids, labels = pretrain_dataset[1]
-    print(input_ids.shape, labels.shape)
-    print((labels == -100).sum().item(), "个 pad 位置")
-    print(tokenizer.decode(input_ids[labels != -100]))
+    collator = PretrainCollator(tokenizer.pad_token_id)
+    batch_input_ids, batch_labels = collator(samples)
+    print("动态 padding 后：", batch_input_ids.shape, batch_labels.shape)
+    print("每个样本的 padding 数：", (batch_labels == -100).sum(dim=1).tolist())

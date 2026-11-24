@@ -8,8 +8,7 @@ from contextlib import nullcontext
 from pathlib import Path
 
 # 使用 python xxx/train_pretrain.py 直接运行时，补充当前模块所属的包。
-if not __package__:
-    __package__ = "aislant_minimind.simple_train"
+__package__ = "aislant_minimind.simple_train"
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT))
 
@@ -23,7 +22,7 @@ from torch.utils.data.distributed import DistributedSampler  # [DDP]
 from tqdm.auto import tqdm
 from transformers import AutoTokenizer
 
-from ..dataset.lm_dataset import PretrainDataset
+from ..dataset.lm_dataset import PretrainCollator, PretrainDataset
 from ..model.modeling_minimind_llama import MiniMindLlamaConfig, MiniMindLlamaForCausalLM
 from .utils import Logger, resolve_dtype, setup_seed
 
@@ -124,6 +123,7 @@ if __name__ == "__main__":
 
     # 3. 数据、优化器与学习率
     dataset = PretrainDataset(args.data_path, tokenizer, max_length=args.max_seq_len)
+    collator = PretrainCollator(tokenizer.pad_token_id)
     # [DDP] 用 DistributedSampler 切分数据，此时 DataLoader 不能再 shuffle=True
     sampler = DistributedSampler(dataset, num_replicas=world_size, rank=rank, shuffle=True,
                                  seed=args.seed) if ddp else None
@@ -132,6 +132,7 @@ if __name__ == "__main__":
         batch_size=args.batch_size,
         shuffle=(sampler is None),
         sampler=sampler,
+        collate_fn=collator,
         num_workers=args.num_workers,
         pin_memory=(device.type == "cuda")
     )

@@ -8,7 +8,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from transformers import AutoTokenizer, HfArgumentParser
 
-from ..dataset.lm_dataset import PretrainDataset
+from ..dataset.lm_dataset import PretrainCollator, PretrainDataset
 from ..model.modeling_minimind_llama import (
     MiniMindLlamaConfig,
     MiniMindLlamaForCausalLM,
@@ -79,6 +79,7 @@ class PretrainTrainer(Trainer):
 
         self.model_config = self.model.config
         self.model = self.model.to(self.device)
+        self.data_collator = PretrainCollator(self.tokenizer.pad_token_id)
         get_model_params(self.model, self.model_config)
 
     def build_dataset(self):

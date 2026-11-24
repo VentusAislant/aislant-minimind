@@ -12,7 +12,7 @@ from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
 from transformers import AutoTokenizer
 
-from ..dataset.lm_dataset import PretrainDataset
+from ..dataset.lm_dataset import PretrainCollator, PretrainDataset
 from ..model.modeling_minimind_llama import MiniMindLlamaConfig, MiniMindLlamaForCausalLM
 from .utils import Logger, resolve_dtype, setup_seed
 
@@ -84,10 +84,12 @@ if __name__ == "__main__":
 
     # 3. 数据、优化器与学习率
     dataset = PretrainDataset(args.data_path, tokenizer, max_length=args.max_seq_len)
+    collator = PretrainCollator(tokenizer.pad_token_id)
     loader = DataLoader(
         dataset,
         batch_size=args.batch_size,
         shuffle=True,
+        collate_fn=collator,
         num_workers=args.num_workers,
         pin_memory=(device.type == "cuda"),
     )
