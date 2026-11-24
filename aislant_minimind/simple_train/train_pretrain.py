@@ -7,8 +7,9 @@ import sys
 from contextlib import nullcontext
 from pathlib import Path
 
-# 可以支持 python xxx/train_pretrain.py 直接运行
-__package__ = "aislant_minimind.elegant_train"
+# 使用 python xxx/train_pretrain.py 直接运行时，补充当前模块所属的包。
+if not __package__:
+    __package__ = "aislant_minimind.simple_train"
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT))
 

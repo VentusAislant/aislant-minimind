@@ -14,7 +14,7 @@ import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel
 from torch.utils.data import Sampler
 from transformers import AutoTokenizer, AutoModel, AutoModelForSequenceClassification
-from ..model.model_minimind import MiniMindForCausalLM
+from ..model.modeling_minimind_llama import MiniMindLlamaForCausalLM
 
 # ======== 模型参数量 ========
 def get_model_params(model, config):
@@ -154,7 +154,7 @@ def lm_checkpoint(lm_config, weight='full_sft', model=None, optimizer=None, epoc
 # ======== 模型初始化 ========
 def init_model(lm_config, from_weight, tokenizer_path, save_dir, device):
     tokenizer = AutoTokenizer.from_pretrained(tokenizer_path)
-    model = MiniMindForCausalLM(lm_config)
+    model = MiniMindLlamaForCausalLM(lm_config)
 
     if from_weight!= 'none':
         moe_suffix = '_moe' if lm_config.use_moe else ''
