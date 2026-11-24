@@ -224,7 +224,7 @@ def train_tokenizer(
         for token in ADDITIONAL_TOKENS + BUFFER_TOKENS
     ])
 
-    # 直接包装为 Hugging Face tokenizer，并通过统一接口一次保存全部配置。
+    # 直接包装为 Hugging Face tokenizer，并通过统一接口一次保存全部配置
     hf_tokenizer = PreTrainedTokenizerFast(
         tokenizer_object=tokenizer,
         bos_token=CORE_SPECIAL_TOKENS["bos_token"],
