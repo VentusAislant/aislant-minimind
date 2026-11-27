@@ -121,9 +121,9 @@ class DPODataset(Dataset):
 
         # DPO 训练代码显式使用错开一位的 x/y，并用 mask 选择 assistant token。
         return (
-            torch.tensor(input_ids[:-1], dtype=torch.long),
-            torch.tensor(input_ids[1:], dtype=torch.long),
-            torch.tensor(loss_mask[1:], dtype=torch.long),
+            torch.tensor(input_ids[:-1], dtype=torch.long),  # x_chosen
+            torch.tensor(input_ids[1:], dtype=torch.long),   # y_chosen
+            torch.tensor(loss_mask[1:], dtype=torch.long),   # mask_chosen
         )
 
     def __getitem__(self, index):

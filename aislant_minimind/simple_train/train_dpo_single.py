@@ -41,7 +41,59 @@ def parse_args():
 
 def sequence_log_probs(logits, labels, mask):
     """计算每条序列中 assistant 回复部分的 log-prob 总和。"""
+    # 通过 log softmax 得到每个词的 log 概率, 形状 [2*bsz, seq_len, vocab_size]
     token_log_probs = F.log_softmax(logits.float(), dim=-1)
+    # 取出 label token 对应位置的 log 概率
+    """
+    例如: bsz=1(chosen 与 rejected 拼接后实际 batch 为 2), seq_len=3, vocab_size=4
+        token_log_probs = torch.tensor([
+            # ---- 样本 0:chosen ----
+            [[-2.3, -0.5, -1.8, -3.0],   # 位置 0
+             [-1.2, -2.0, -0.4, -2.5],   # 位置 1
+             [-3.1, -1.0, -2.2, -0.3]],  # 位置 2
+            # ---- 样本 1:rejected ----
+            [[-1.5, -2.2, -0.6, -2.8],   # 位置 0
+             [-0.9, -1.7, -2.4, -1.1],   # 位置 1
+             [-2.6, -0.8, -3.2, -1.4]],  # 位置 2
+        ])  # 形状 [2, 3, 4]
+
+        labels = torch.tensor([
+            [1, 2, 3],   # chosen 的目标 token
+            [2, 0, 1],   # rejected 的目标 token(回复内容不同,所以 id 不同)
+        ])  # 形状 [2, 3]
+
+        labels.unsqueeze(-1) = tensor([
+            [[1], [2], [3]],
+            [[2], [0], [1]]
+        ])  # 形状 [2, 3, 1]
+
+        gather(token_log_probs, 2, labels.unsqueeze(-1)):
+            tensor([[[-0.5], [-0.4], [-0.3]],     # chosen
+                    [[-0.6], [-0.9], [-0.8]]])    # rejected
+            # 形状 [2, 3, 1]
+
+        gather.squeeze(-1):
+            tensor([[-0.5, -0.4, -0.3],     # chosen
+                    [-0.6, -0.9, -0.8]])    # rejected
+            # 形状 [2, 3],每个位置是"正确 token"的 log 概率
+
+        * mask:
+            mask = tensor([
+                [0, 1, 1],   # chosen:位置 0 是 prompt,位置 1、2 是回复
+                [0, 1, 0],   # rejected:位置 0 是 prompt,位置 1 是回复,位置 2 是 padding
+            ])  # 形状 [2, 3]
+
+            tensor([[ 0.0, -0.4, -0.3],
+                    [ 0.0, -0.9,  0.0]])
+            # prompt 和 padding 位置被置 0,不参与累加;形状仍为 [2, 3]
+
+        sum(dim=-1):
+            tensor([-0.7, -0.9])
+            # chosen = -0.4 + -0.3 = -0.7
+            # rejected = -0.9
+            # 形状 [2],即 [2*bsz],每条序列的回复部分 log 概率总和
+            # 之后在 compute_dpo_loss 里用 chunk(2) 拆成 chosen / rejected
+    """
     token_log_probs = torch.gather(token_log_probs, 2, labels.unsqueeze(-1)).squeeze(-1)
     return (token_log_probs * mask).sum(dim=-1)
 
@@ -50,8 +102,20 @@ def compute_dpo_loss(policy_log_probs, reference_log_probs, beta):
     """batch 前半为 chosen、后半为 rejected。"""
     chosen_policy, rejected_policy = policy_log_probs.chunk(2)
     chosen_reference, rejected_reference = reference_log_probs.chunk(2)
+    # log 空间的差就是概率比
     policy_ratio = chosen_policy - rejected_policy
     reference_ratio = chosen_reference - rejected_reference
+    """
+    loss = - \log{sigmoid{
+        beta * (
+            \log{\frac{\pi_{\theta}(y_w)}{\pi_{ref}(y_w)}}
+            -
+            \log{\frac{\pi_{\theta}(y_l)}{\pi_{ref}(y_l)}}
+        )
+    }}
+    y_w 表示接受
+    y_l 表示拒绝
+    """
     return -F.logsigmoid(beta * (policy_ratio - reference_ratio)).mean()
 
 
@@ -122,6 +186,7 @@ if __name__ == "__main__":
             rejected_y = batch["y_rejected"].to(device)
             chosen_mask = batch["mask_chosen"].to(device)
             rejected_mask = batch["mask_rejected"].to(device)
+            # 将 chosen 和 rejected 拼接到一个 batch 中, 因此这里实际 forward 的 batch size是 2 * batch_size
             input_ids = torch.cat((chosen_x, rejected_x), dim=0)
             labels = torch.cat((chosen_y, rejected_y), dim=0)
             loss_mask = torch.cat((chosen_mask, rejected_mask), dim=0)
@@ -132,8 +197,11 @@ if __name__ == "__main__":
 
             with autocast_ctx:
                 with torch.no_grad():
+                    # 冻结的参考模型
                     reference_outputs = reference_model(input_ids)
+                # 正在训练的模型
                 policy_outputs = model(input_ids)
+
                 reference_log_probs = sequence_log_probs(reference_outputs.logits, labels, loss_mask)
                 policy_log_probs = sequence_log_probs(policy_outputs.logits, labels, loss_mask)
                 dpo_loss = compute_dpo_loss(policy_log_probs, reference_log_probs, args.beta)
