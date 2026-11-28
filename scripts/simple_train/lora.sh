@@ -8,7 +8,7 @@ export OMP_NUM_THREADS="${OMP_NUM_THREADS:-1}"
 torchrun --nproc_per_node=gpu -m aislant_minimind.simple_train.train_lora \
     --model_path outputs/simple_full_sft \
     --data_path data/lora_medical.jsonl \
-    --output_dir outputs/simple_lora \
+    --output_dir outputs/simple_lora_medical \
     --use_wandb \
     "$@"
 
@@ -16,6 +16,6 @@ torchrun --nproc_per_node=gpu -m aislant_minimind.simple_train.train_lora \
 #python -m aislant_minimind.simple_train.train_lora_single \
 #    --model_path outputs/simple_full_sft_single \
 #    --data_path data/lora_medical.jsonl \
-#    --output_dir outputs/simple_lora_single \
+#    --output_dir outputs/simple_lora_single_medical \
 #    --use_wandb \
 #    "$@"

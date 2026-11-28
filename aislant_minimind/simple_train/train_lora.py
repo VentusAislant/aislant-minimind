@@ -16,7 +16,6 @@ sys.path.insert(0, str(PROJECT_ROOT))
 import datasets  # noqa: F401  # Windows pyarrow/torch DLL conflict workaround
 import torch
 import torch.distributed as dist
-from torch import nn
 from torch import optim
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader
@@ -25,7 +24,7 @@ from tqdm.auto import tqdm
 from transformers import AutoTokenizer
 
 from ..dataset.lm_dataset import SFTCollator, SFTDataset
-from ..model.lora import Linear as LoRALinear
+from ..model.lora import add_lora_into_model_by_name, get_target_modules
 from ..model.lora import lora_state_dict, mark_only_lora_as_trainable
 from ..model.modeling_minimind_llama import MiniMindLlamaForCausalLM
 from .utils import Logger, resolve_dtype, setup_seed
@@ -77,35 +76,6 @@ def init_distributed():
     return True, rank, local_rank, world_size
 
 
-def inject_lora(model, target_modules, rank, alpha, dropout):
-    """将指定的 nn.Linear 原地替换成 LoRA Linear，并保留预训练权重。"""
-    target_modules = set(target_modules)
-    replaced = []
-    for parent_name, parent in list(model.named_modules()):
-        for child_name, child in list(parent.named_children()):
-            if child_name not in target_modules or not isinstance(child, nn.Linear):
-                continue
-            if isinstance(child, LoRALinear):
-                continue
-
-            lora_linear = LoRALinear(
-                child.in_features,
-                child.out_features,
-                r=rank,
-                lora_alpha=alpha,
-                lora_dropout=dropout,
-                bias=child.bias is not None,
-                merge_weights=True,
-            ).to(device=child.weight.device, dtype=child.weight.dtype)
-            with torch.no_grad():
-                lora_linear.weight.copy_(child.weight)
-                if child.bias is not None:
-                    lora_linear.bias.copy_(child.bias)
-            setattr(parent, child_name, lora_linear)
-            replaced.append(f"{parent_name}.{child_name}".lstrip("."))
-    return replaced
-
-
 if __name__ == "__main__":
     """
     从项目根目录运行（4 卡示例）：
@@ -133,12 +103,19 @@ if __name__ == "__main__":
     tokenizer = AutoTokenizer.from_pretrained(args.model_path)
     model = MiniMindLlamaForCausalLM.from_pretrained(args.model_path).to(device)
     lora_alpha = args.lora_alpha if args.lora_alpha is not None else args.lora_rank
-    replaced_modules = inject_lora(
+    lora_module_names = get_target_modules(model, args.target_modules)
+    if not lora_module_names:
+        raise ValueError(f"没有找到目标层：{args.target_modules}")
+    lora_config = {
+        "r": args.lora_rank,
+        "lora_alpha": lora_alpha,
+        "lora_dropout": args.lora_dropout,
+        "merge_weights": True,
+    }
+    add_lora_into_model_by_name(
         model,
-        target_modules=args.target_modules,
-        rank=args.lora_rank,
-        alpha=lora_alpha,
-        dropout=args.lora_dropout,
+        names=lora_module_names,
+        lora_cfg=lora_config,
     )
     mark_only_lora_as_trainable(model, bias=args.lora_bias)
     model.train()
@@ -146,10 +123,10 @@ if __name__ == "__main__":
     lora_params = [parameter for parameter in model.parameters() if parameter.requires_grad]
     total_params = sum(parameter.numel() for parameter in model.parameters())
     trainable_params = sum(parameter.numel() for parameter in lora_params)
-    if not replaced_modules or not lora_params:
+    if not lora_params:
         raise ValueError(f"没有找到目标层：{args.target_modules}")
     if is_main:
-        Logger(f"LoRA Modules: {len(replaced_modules)}", level="info")
+        Logger(f"LoRA Modules: {len(lora_module_names)}", level="info")
         Logger(
             f"LoRA Params: {trainable_params / 1e6:.3f}M / {total_params / 1e6:.3f}M "
             f"({trainable_params / total_params * 100:.3f}%)",

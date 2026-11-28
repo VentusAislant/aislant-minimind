@@ -1,7 +1,5 @@
-#  ------------------------------------------------------------------------------------------
-#  Copyright (c) Microsoft Corporation. All rights reserved.
-#  Licensed under the MIT License (MIT). See LICENSE in the repo root for license information.
-#  ------------------------------------------------------------------------------------------
+# Adapted from Microsoft LoRA. Copyright (c) Microsoft Corporation.
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -32,6 +30,14 @@ class LoRALayer():
         # Mark the weight as unmerged
         self.merged = False
         self.merge_weights = merge_weights
+
+    def merge(self):
+        """将 LoRA 增量合并到原始权重。"""
+        raise NotImplementedError
+
+    def unmerge(self):
+        """从原始权重中移除已经合并的 LoRA 增量。"""
+        raise NotImplementedError
 
 
 class Embedding(nn.Embedding, LoRALayer):
@@ -78,20 +84,23 @@ class Embedding(nn.Embedding, LoRALayer):
         # model.train() 调用 train(True),model.eval() 调用 train(False)
         # 因为 train 和 eval 可以重复调用，这里需要合并标记，来防止重复的合并和拆解
         nn.Embedding.train(self, mode)
-        if mode:  # 训练模式
-            if self.merge_weights and self.merged:
-                # 允许合并且当前已合并，撤销合并，防止重复的加
-                # Make sure that the weights are not merged
-                if self.r > 0:
-                    self.weight.data -= (self.lora_B @ self.lora_A).transpose(0, 1) * self.scaling
-                self.merged = False
-        else:  # 评估模式
-            if self.merge_weights and not self.merged:
-                # 允许合并且当前未合并，撤销合并，防止重复的减
-                # Merge the weights and mark it
-                if self.r > 0:
-                    self.weight.data += (self.lora_B @ self.lora_A).transpose(0, 1) * self.scaling
-                self.merged = True
+        if self.merge_weights:
+            self.unmerge() if mode else self.merge()
+        return self
+
+    @torch.no_grad()
+    def merge(self):
+        if self.r > 0 and not self.merged:
+            # 防止重复合并
+            self.weight.add_((self.lora_B @ self.lora_A).transpose(0, 1), alpha=self.scaling)
+            self.merged = True
+
+    @torch.no_grad()
+    def unmerge(self):
+        if self.r > 0 and self.merged:
+            # 防止重复拆解
+            self.weight.sub_((self.lora_B @ self.lora_A).transpose(0, 1), alpha=self.scaling)
+            self.merged = False
 
     def forward(self, input: torch.Tensor):
         if self.r > 0 and not self.merged:
@@ -151,22 +160,26 @@ class Linear(nn.Linear, LoRALayer):
             nn.init.zeros_(self.lora_B)
 
     def train(self, mode: bool = True):
-        def T(w):
-            return w.transpose(0, 1) if self.fan_in_fan_out else w
-
         nn.Linear.train(self, mode)
-        if mode:
-            if self.merge_weights and self.merged:
-                # Make sure that the weights are not merged
-                if self.r > 0:
-                    self.weight.data -= T(self.lora_B @ self.lora_A) * self.scaling
-                self.merged = False
-        else:
-            if self.merge_weights and not self.merged:
-                # Merge the weights and mark it
-                if self.r > 0:
-                    self.weight.data += T(self.lora_B @ self.lora_A) * self.scaling
-                self.merged = True
+        if self.merge_weights:
+            self.unmerge() if mode else self.merge()
+        return self
+
+    def _lora_delta_weight(self):
+        delta_weight = self.lora_B @ self.lora_A
+        return delta_weight.transpose(0, 1) if self.fan_in_fan_out else delta_weight
+
+    @torch.no_grad()
+    def merge(self):
+        if self.r > 0 and not self.merged:
+            self.weight.add_(self._lora_delta_weight(), alpha=self.scaling)
+            self.merged = True
+
+    @torch.no_grad()
+    def unmerge(self):
+        if self.r > 0 and self.merged:
+            self.weight.sub_(self._lora_delta_weight(), alpha=self.scaling)
+            self.merged = False
 
     def forward(self, input: torch.Tensor):
         def T(w):
@@ -182,10 +195,12 @@ class Linear(nn.Linear, LoRALayer):
 
 class MergedLinear(nn.Linear, LoRALayer):
     """
-    在某些模型中的注意力 q k v 三个投影通常被合并成一个更大的 linear
+    在某些模型中(如 GPT2)的注意力 q k v 三个投影层通常被合并成一个更大的 linear
         将 w_q, w_k, w_v 在输出维度上拼起来 -> [3*d, in]
         输出 [..., 3d] 然后切分成 q, k, v
-
+    问题:
+        普通 Linear 只能对整个大矩阵加一个 LoRA(B: [3d, r]),等于 q、k、v 共用一个低秩增量
+        无法"只给 q 和 v 加 LoRA, LoRA 论文的经典设置恰恰是只对 q 和 v 加
     MergedLinear:
         在一个合并的大矩阵里,选择性地只对其中某几段(q/k/v)加 LoRA,每段各有独立的 A、B
     """
@@ -197,7 +212,7 @@ class MergedLinear(nn.Linear, LoRALayer):
             r: int = 0,
             lora_alpha: int = 1,
             lora_dropout: float = 0.,
-            enable_lora: List[bool] = [False],
+            enable_lora: List[bool] = [False],  # 例如: enable_lora=[True, False, True]:权重分 3 段(q, k, v),q 和 v 启用、k 不启用
             fan_in_fan_out: bool = False,
             merge_weights: bool = True,
             **kwargs
@@ -209,6 +224,11 @@ class MergedLinear(nn.Linear, LoRALayer):
             'The length of enable_lora must divide out_features'
         self.enable_lora = enable_lora
         self.fan_in_fan_out = fan_in_fan_out
+        """
+        假设 out=3d, r=8,  enable_lora=[True, False, True]
+            lora_A: [r*2, in] = [16, in]
+            lora_b: [(3d/3)*2, r] = [2d, r]
+        """
         # Actual trainable parameters
         if r > 0 and any(enable_lora):
             self.lora_A = nn.Parameter(
@@ -220,6 +240,18 @@ class MergedLinear(nn.Linear, LoRALayer):
             # Freezing the pre-trained weight matrix
             self.weight.requires_grad = False
             # Compute the indices
+            # lora_ind: 标记哪些输出位置属于启用的段
+            """
+            假设 out=3*2=6, enable_lora=[True, False, True]
+                view(3, -1): [[F, F],
+                              [F, F],
+                              [F, F]]
+                置 True 的行 0 和 2:
+                             [[T, T],
+                              [F, F],
+                              [T, T]]
+                展平:         [T, T, F, F, T, T]
+            """
             self.lora_ind = self.weight.new_zeros(
                 (out_features,), dtype=torch.bool
             ).view(len(enable_lora), -1)
@@ -242,44 +274,48 @@ class MergedLinear(nn.Linear, LoRALayer):
         return result
 
     def merge_AB(self):
+        # 对每个启用的段 i, 计算 \Delta_i = B_i A_i, 各段之间互不干扰
         def T(w):
             return w.transpose(0, 1) if self.fan_in_fan_out else w
 
         delta_w = F.conv1d(
-            self.lora_A.unsqueeze(0),
-            self.lora_B.unsqueeze(-1),
+            # 卷积输入: 形状为 [bsz, channel_in, seq_len] 分别对应 batch size, 输入通道数, 序列长度
+            input=self.lora_A.unsqueeze(0),  # [1, r*k, in]
+            # 卷积参数: 形状为 [channel_out, channel_in, kernel_size]
+            weight=self.lora_B.unsqueeze(-1),  # [d*k, r, 1]
+            # 分组卷积: 输入通道和输出通道平均分为 groups 组, 第 i 组输出只给第 i 组输入计算
             groups=sum(self.enable_lora)
         ).squeeze(0)
         return T(self.zero_pad(delta_w))
 
     def train(self, mode: bool = True):
-        def T(w):
-            return w.transpose(0, 1) if self.fan_in_fan_out else w
-
         nn.Linear.train(self, mode)
-        if mode:
-            if self.merge_weights and self.merged:
-                # Make sure that the weights are not merged
-                if self.r > 0 and any(self.enable_lora):
-                    self.weight.data -= self.merge_AB() * self.scaling
-                self.merged = False
-        else:
-            if self.merge_weights and not self.merged:
-                # Merge the weights and mark it
-                if self.r > 0 and any(self.enable_lora):
-                    self.weight.data += self.merge_AB() * self.scaling
-                self.merged = True
+        if self.merge_weights:
+            self.unmerge() if mode else self.merge()
+        return self
 
-    def forward(self, x: torch.Tensor):
+    @torch.no_grad()
+    def merge(self):
+        if self.r > 0 and any(self.enable_lora) and not self.merged:
+            self.weight.add_(self.merge_AB(), alpha=self.scaling)
+            self.merged = True
+
+    @torch.no_grad()
+    def unmerge(self):
+        if self.r > 0 and any(self.enable_lora) and self.merged:
+            self.weight.sub_(self.merge_AB(), alpha=self.scaling)
+            self.merged = False
+
+    def forward(self, input: torch.Tensor):
         def T(w):
             return w.transpose(0, 1) if self.fan_in_fan_out else w
 
         if self.merged:
-            return F.linear(x, T(self.weight), bias=self.bias)
+            return F.linear(input, T(self.weight), bias=self.bias)
         else:
-            result = F.linear(x, T(self.weight), bias=self.bias)
+            result = F.linear(input, T(self.weight), bias=self.bias)
             if self.r > 0:
-                result += self.lora_dropout(x) @ T(self.merge_AB().T) * self.scaling
+                result += self.lora_dropout(input) @ T(self.merge_AB().T) * self.scaling
             return result
 
 
@@ -315,18 +351,24 @@ class ConvLoRA(nn.Module, LoRALayer):
 
     def train(self, mode=True):
         super(ConvLoRA, self).train(mode)
-        if mode:
-            if self.merge_weights and self.merged:
-                if self.r > 0:
-                    # Make sure that the weights are not merged
-                    self.conv.weight.data -= (self.lora_B @ self.lora_A).view(self.conv.weight.shape) * self.scaling
-                self.merged = False
-        else:
-            if self.merge_weights and not self.merged:
-                if self.r > 0:
-                    # Merge the weights and mark it
-                    self.conv.weight.data += (self.lora_B @ self.lora_A).view(self.conv.weight.shape) * self.scaling
-                self.merged = True
+        if self.merge_weights:
+            self.unmerge() if mode else self.merge()
+        return self
+
+    def _lora_delta_weight(self):
+        return (self.lora_B @ self.lora_A).view(self.conv.weight.shape)
+
+    @torch.no_grad()
+    def merge(self):
+        if self.r > 0 and not self.merged:
+            self.conv.weight.add_(self._lora_delta_weight(), alpha=self.scaling)
+            self.merged = True
+
+    @torch.no_grad()
+    def unmerge(self):
+        if self.r > 0 and self.merged:
+            self.conv.weight.sub_(self._lora_delta_weight(), alpha=self.scaling)
+            self.merged = False
 
     def forward(self, x):
         if self.r > 0 and not self.merged:
@@ -349,7 +391,6 @@ class Conv1d(ConvLoRA):
 
 
 # Can Extend to other ones like this
-
 class Conv3d(ConvLoRA):
     def __init__(self, *args, **kwargs):
         super(Conv3d, self).__init__(nn.Conv3d, *args, **kwargs)
